@@ -1193,7 +1193,7 @@ export default function InventoryCatalog({ onSelectCar, user, cars: allCars }: C
             </div>
           ) : view === "grid" ? (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filtered.map(car => (
+              {filtered.filter(car => car.image).map(car => (
                 <CarCard
                   key={car.id}
                   car={car}
@@ -1206,7 +1206,7 @@ export default function InventoryCatalog({ onSelectCar, user, cars: allCars }: C
             </div>
           ) : (
             <div className="flex flex-col gap-3 w-full">
-              {filtered.map(car => (
+              {filtered.filter(car => car.image).map(car => (
                 <CarListItem
                   key={car.id}
                   car={car}

@@ -504,6 +504,7 @@ export default function CarDetailsModal({ car, onClose, onCheckout }: CarDetails
         transition={{ duration: 0.2 }}
         className="fixed inset-0 z-50 flex bg-black/60 backdrop-blur-sm"
         onClick={onClose}
+        style={{ pointerEvents: car ? "auto" : "none" }}
       >
         {/* Full-screen detail panel */}
         <motion.div
@@ -561,7 +562,7 @@ export default function CarDetailsModal({ car, onClose, onCheckout }: CarDetails
               >
                 {t.label}
                 {tab === t.id && (
-                  <motion.div layoutId="detail-tab" className="absolute bottom-0 left-0 right-0 h-px bg-primary" transition={{ type: "spring", bounce: 0.15, duration: 0.4 }} />
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute bottom-0 left-0 right-0 h-px bg-primary" />
                 )}
               </button>
             ))}
@@ -569,7 +570,7 @@ export default function CarDetailsModal({ car, onClose, onCheckout }: CarDetails
 
           {/* Content */}
           <div ref={contentRef} className="flex-1 overflow-y-auto overscroll-contain p-6">
-            <AnimatePresence>
+            <AnimatePresence mode="wait">
               {tab === "overview" && (
                 <motion.div
                   key="overview"

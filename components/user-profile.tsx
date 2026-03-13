@@ -221,7 +221,7 @@ export default function UserProfile({ onNavigate, onSelectCar, user, onLogout }:
                 </button>
               </div>
             ) : (
-              savedCars.map((car, i) => (
+              savedCars.filter(car => car.image).map((car, i) => (
                 <div key={i} className="flex items-center gap-4 rounded-2xl border border-border bg-card p-4 hover:border-primary/20 transition-colors">
                   <div className="h-16 w-24 flex-shrink-0 rounded-xl overflow-hidden">
                     <img src={car.image} alt={`${car.make} ${car.model}`} crossOrigin="anonymous" className="h-full w-full object-cover" />

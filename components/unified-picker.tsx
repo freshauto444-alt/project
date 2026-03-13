@@ -391,6 +391,7 @@ function AIChat({
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    if (messages.length > 1) return
     const tags = buildTags(answers)
     const intro =
       tags.length > 0
@@ -401,7 +402,7 @@ function AIChat({
           }`
         : "Привіт! Я AI-асистент Fresh Auto. Розкажіть що шукаєте — і я підберу найкращі варіанти."
     setMessages([{ role: "assistant", content: intro }])
-  }, [])
+  }, [cars.length])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -646,7 +647,7 @@ function ResultsScreen({
             <div key={i} className="aspect-[16/10] animate-pulse rounded-2xl bg-white/[0.03]" />
           ))}
         </div>
-      ) : cars.length === 0 ? (
+      ) : allCars.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-14 text-center">
           <Search className="h-8 w-8 text-white/[0.07]" />
           <p className="text-sm text-white/32">
@@ -669,9 +670,9 @@ function ResultsScreen({
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {allCars.map((car, i) => (
+          {allCars.filter(car => car.image).map((car, i) => (
             <motion.div
-              key={car.id}
+              key={car.id ?? `car-${i}`}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.06 }}

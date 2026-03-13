@@ -78,7 +78,7 @@ function Card({ car, onSelect, index }: { car: Car; onSelect: (car: Car) => void
 }
 
 export default function FreshArrivals({ onSelectCar, onViewAll }: FreshArrivalsProps) {
-  const freshCars = cars.filter((c) => c.status === "In Stock" || c.status === "Verified").slice(0, 6)
+  const freshCars = cars.filter((c) => (c.status === "In Stock" || c.status === "Verified") && c.image).slice(0, 6)
 
   return (
     <section className="py-24 px-6 lg:px-10">

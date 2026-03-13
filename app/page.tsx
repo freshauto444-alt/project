@@ -73,7 +73,7 @@ export default function Page() {
     return (
       <div className="pt-20">
         <InventoryCatalog onSelectCar={handleSelectCar} user={null} cars={allCarsData} />
-        <AnimatePresence>
+        <AnimatePresence mode="wait">
           {showModal && selectedCar && (
             <CarDetailsModal car={selectedCar} onClose={handleCloseModal} onCheckout={handleCheckout} />
           )}

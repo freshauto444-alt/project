@@ -12,12 +12,11 @@ interface Answer {
   custom: string
 }
 
-// Map Ukrainian UI values → DB values
 const FUEL_MAP: Record<string, string[]> = {
-  "Бензин":        ["Petrol", "petrol", "PETROL"],
-  "Дизель":        ["Diesel", "diesel", "DIESEL"],
-  "Електро":       ["Electric", "electric", "ELECTRIC"],
-  "Гібрид":        ["Hybrid", "hybrid", "HYBRID"],
+  "Бензин":         ["Petrol", "petrol", "PETROL"],
+  "Дизель":         ["Diesel", "diesel", "DIESEL"],
+  "Електро":        ["Electric", "electric", "ELECTRIC"],
+  "Гібрид":         ["Hybrid", "hybrid", "HYBRID"],
   "Plug-in гібрид": ["Hybrid", "hybrid", "HYBRID_PETROL", "HYBRID_DIESEL"],
 }
 
@@ -38,45 +37,85 @@ function parseBudget(budget: string): { min: number | null; max: number | null }
   return { min: null, max: null }
 }
 
+// Витягує марку/модель з тексту через Claude Haiku
+async function extractMakeModelFromAnswers(answers: Answer[]): Promise<{ make: string | null; model: string | null }> {
+  // Збираємо весь текст з відповідей — custom поля можуть містити "пасат", "bmw x5" тощо
+  const customTexts = answers
+    .map(a => a.custom?.trim())
+    .filter(Boolean)
+    .join(" ")
+
+  if (!customTexts) return { make: null, model: null }
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY!,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 40,
+        system: 'Extract car make and model from text (Ukrainian/Russian/English). Examples: "пасат"→{"make":"Volkswagen","model":"Passat"}, "бмв х5"→{"make":"BMW","model":"X5"}, "audi a4"→{"make":"Audi","model":"A4"}. Return ONLY valid JSON: {"make":"...","model":"..."} or {"make":null,"model":null}.',
+        messages: [{ role: "user", content: customTexts }],
+      }),
+    })
+    const data = await res.json()
+    return JSON.parse(data.content?.[0]?.text?.trim() ?? "{}")
+  } catch {
+    return { make: null, model: null }
+  }
+}
+
 export async function POST(req: Request) {
   const { answers }: { answers: Answer[] } = await req.json()
 
   const byId = Object.fromEntries(answers.map(a => [a.questionId, a]))
 
-  const fuel        = byId.fuel?.selected ?? []
-  const year        = byId.year?.selected[0] ?? byId.year?.custom ?? null
+  const fuel         = byId.fuel?.selected ?? []
+  const year         = byId.year?.selected[0] ?? byId.year?.custom ?? null
   const transmission = byId.transmission?.selected[0] ?? null
-  const budget      = byId.budget?.selected[0] ?? byId.budget?.custom ?? null
+  const budget       = byId.budget?.selected[0] ?? byId.budget?.custom ?? null
 
-  // Build query
+  // Витягуємо марку/модель з custom-відповідей
+  const { make, model } = await extractMakeModelFromAnswers(answers)
+  console.log("[search] extracted make/model:", { make, model })
+
+  // ── Будуємо Supabase query ─────────────────────────────────────────────────
   let query = supabase
     .from("cars")
     .select("*")
+    .eq("status", "Available")
     .order("created_at", { ascending: false })
     .limit(20)
 
-  // Year
+  // Марка і модель
+  if (make) query = query.ilike("make", `%${make}%`)
+  if (model) query = query.ilike("model", `%${model}%`)
+
+  // Рік
   if (year) {
     const yearNum = parseInt(year)
     if (!isNaN(yearNum)) query = query.gte("year", yearNum)
   }
 
-  // Budget
+  // Бюджет
   const { min: priceMin, max: priceMax } = parseBudget(budget ?? "")
   if (priceMin) query = query.gte("price", priceMin)
   if (priceMax) query = query.lte("price", priceMax)
 
-  // Fuel — OR across selected types
+  // Паливо
   if (fuel.length > 0) {
     const dbFuels = fuel.flatMap(f => FUEL_MAP[f] ?? [f])
-    const unique = [...new Set(dbFuels)]
-    query = query.in("fuel", unique)
+    query = query.in("fuel", [...new Set(dbFuels)])
   }
 
-  // Transmission
+  // Трансмісія
   if (transmission) {
-    const dbTransmissions = TRANSMISSION_MAP[transmission] ?? [transmission]
-    query = query.in("transmission", dbTransmissions)
+    const dbTrans = TRANSMISSION_MAP[transmission] ?? [transmission]
+    query = query.in("transmission", dbTrans)
   }
 
   const { data, error } = await query
