@@ -69,9 +69,11 @@ function Card({ car, onSelect, index }: { car: Car; onSelect: (car: Car) => void
           <MapPin className="h-4 w-4 text-primary/50" />
           {car.countryUa}
         </span>
-        <span className="ml-auto text-sm font-bold text-primary/70">
-          {car.horsepower} {"k.c."}
-        </span>
+        {car.horsepower != null && (
+          <span className="ml-auto text-sm font-bold text-primary/70">
+            {car.horsepower} {"k.c."}
+          </span>
+        )}
       </div>
     </div>
   )

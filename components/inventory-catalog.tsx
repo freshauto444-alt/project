@@ -592,10 +592,10 @@ const CarCard = memo(function CarCard({
 
         {/* Quick specs overlay */}
         <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center gap-2.5 text-[9px] text-white/70 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-          <span className="flex items-center gap-1"><Fuel className="h-2.5 w-2.5" />{car.fuelUa}</span>
-          <span className="flex items-center gap-1"><Gauge className="h-2.5 w-2.5" />{car.horsepower} hp</span>
-          <span className="flex items-center gap-1"><CarIcon className="h-2.5 w-2.5" />{car.drive}</span>
-          <span className="flex items-center gap-1"><MapPin className="h-2.5 w-2.5" />{car.countryUa}</span>
+          {car.fuelUa && <span className="flex items-center gap-1"><Fuel className="h-2.5 w-2.5" />{car.fuelUa}</span>}
+          {car.horsepower != null && <span className="flex items-center gap-1"><Gauge className="h-2.5 w-2.5" />{car.horsepower} hp</span>}
+          {car.drive && car.drive !== "unknown" && <span className="flex items-center gap-1"><CarIcon className="h-2.5 w-2.5" />{car.drive}</span>}
+          {car.countryUa && <span className="flex items-center gap-1"><MapPin className="h-2.5 w-2.5" />{car.countryUa}</span>}
         </div>
       </div>
 
@@ -604,15 +604,15 @@ const CarCard = memo(function CarCard({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-foreground truncate">{car.make} {car.model}</h3>
-            <p className="text-[11px] text-muted-foreground mt-0.5">{car.year} {"\u00B7"} {car.engine} {"\u00B7"} {car.bodyTypeUa}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">{[car.year, car.engine, car.bodyTypeUa].filter(Boolean).join(" · ")}</p>
           </div>
           <span className="text-sm font-bold text-foreground flex-shrink-0 tabular-nums">{formatPrice(car.price)}</span>
         </div>
 
         <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground/60">
           <span className="flex items-center gap-1"><Gauge className="h-3 w-3" />{formatMileage(car.mileage)}</span>
-          <span>{car.transmission}</span>
-          <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{car.countryUa}</span>
+          {car.transmission && <span>{car.transmission}</span>}
+          {car.countryUa && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{car.countryUa}</span>}
         </div>
       </div>
     </div>
@@ -684,7 +684,7 @@ const CarListItem = memo(function CarListItem({
                 {car.make} {car.model} {car.year}
               </button>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {car.engine} {"\u00B7"} {car.horsepower} {"к.с."} {"\u00B7"} {car.bodyTypeUa} {"\u00B7"} {car.conditionUa}
+                {[car.engine, car.horsepower != null ? `${car.horsepower} к.с.` : null, car.bodyTypeUa, car.conditionUa].filter(Boolean).join(" · ")}
               </p>
             </div>
             <button
@@ -704,9 +704,9 @@ const CarListItem = memo(function CarListItem({
           {/* Specs row */}
           <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
             <span className="flex items-center gap-1.5"><Gauge className="h-3.5 w-3.5" />{formatMileage(car.mileage)}</span>
-            <span className="flex items-center gap-1.5"><Fuel className="h-3.5 w-3.5" />{car.fuelUa}{car.fuel !== "Electric" ? `, ${car.engine}` : ""}</span>
-            <span className="flex items-center gap-1.5"><CarIcon className="h-3.5 w-3.5" />{car.transmission}</span>
-            <span className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" />{car.countryUa}</span>
+            {car.fuelUa && <span className="flex items-center gap-1.5"><Fuel className="h-3.5 w-3.5" />{car.fuelUa}{car.engine && car.fuel !== "Electric" ? `, ${car.engine}` : ""}</span>}
+            {car.transmission && <span className="flex items-center gap-1.5"><CarIcon className="h-3.5 w-3.5" />{car.transmission}</span>}
+            {car.countryUa && <span className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" />{car.countryUa}</span>}
           </div>
 
           {/* Tags */}
@@ -717,7 +717,7 @@ const CarListItem = memo(function CarListItem({
               car.status === "Reserved" ? "bg-rose-500/10 text-rose-400" :
               "bg-primary/10 text-primary"
             }`}>{car.statusUa}</span>
-            <span className="text-[10px] font-medium px-2.5 py-1 rounded-lg bg-white/[0.04] text-muted-foreground">{car.drive}</span>
+            {car.drive && car.drive !== "unknown" && <span className="text-[10px] font-medium px-2.5 py-1 rounded-lg bg-white/[0.04] text-muted-foreground">{car.drive}</span>}
             {car.colorUa && <span className="text-[10px] font-medium px-2.5 py-1 rounded-lg bg-white/[0.04] text-muted-foreground">{car.colorUa}</span>}
             {car.featuresUa.slice(0, 2).map(f => (
               <span key={f} className="text-[10px] font-medium px-2.5 py-1 rounded-lg bg-white/[0.04] text-muted-foreground">{f}</span>
@@ -726,10 +726,7 @@ const CarListItem = memo(function CarListItem({
 
           {/* Description teaser */}
           <p className="mt-3 text-xs text-muted-foreground/60 line-clamp-2 leading-relaxed">
-            {car.make} {car.model} {car.year}{car.conditionUa ? ` ${car.conditionUa.toLowerCase()},` : ","}{" "}
-            {car.fuelUa.toLowerCase()}{", "}{car.transmission.toLowerCase()}
-            {car.colorUa ? `, ${car.colorUa.toLowerCase()}` : ""}{". "}
-            {car.countryUa ?? ""}{"."}
+            {[car.make, car.model, String(car.year), car.conditionUa, car.fuelUa, car.transmission, car.colorUa, car.countryUa].filter(Boolean).join(", ")}.
           </p>
         </div>
       </div>
@@ -775,10 +772,10 @@ const CarListItem = memo(function CarListItem({
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                 {[
                   { label: "Двигун", value: car.engine },
-                  { label: "Потужність", value: `${car.horsepower} к.с.` },
+                  { label: "Потужність", value: car.horsepower != null ? `${car.horsepower} к.с.` : null },
                   { label: "Паливо", value: car.fuelUa },
                   { label: "КПП", value: car.transmission },
-                  { label: "Привід", value: car.drive },
+                  { label: "Привід", value: car.drive && car.drive !== "unknown" ? car.drive : null },
                   { label: "Пробіг", value: formatMileage(car.mileage) },
                   { label: "Кузов", value: car.bodyTypeUa },
                   { label: "Колір", value: car.colorUa },
@@ -786,7 +783,7 @@ const CarListItem = memo(function CarListItem({
                   { label: "Місця", value: car.seats != null ? `${car.seats}` : null },
                   { label: "Сидіння", value: car.seatMaterialUa },
                   { label: "Країна", value: car.countryUa },
-                ].filter((s): s is { label: string; value: string } => s.value != null).map(s => (
+                ].filter((s): s is { label: string; value: string } => s.value != null && s.value !== "").map(s => (
                   <div key={s.label} className="rounded-xl bg-white/[0.02] border border-white/[0.04] px-3.5 py-2.5">
                     <p className="text-[10px] text-muted-foreground/40 uppercase tracking-wider">{s.label}</p>
                     <p className="text-sm font-semibold text-foreground mt-0.5">{s.value}</p>
@@ -1000,6 +997,7 @@ export default function InventoryCatalog({ onSelectCar, user, cars: allCars }: C
       if (selDrive.length > 0 && !selDrive.includes(car.drive)) return false
       if (selTrans.length > 0) {
         const match = selTrans.some(t => {
+          if (!car.transmission) return false
           if (t === "Автомат") return car.transmission.toLowerCase().includes("automatic") || car.transmission.includes("Speedshift") || car.transmission.includes("Steptronic") || car.transmission.includes("DSG")
           if (t === "Механіка") return car.transmission.toLowerCase().includes("manual")
           if (t === "Робот") return car.transmission.includes("PDK") || car.transmission.includes("DCT") || car.transmission.includes("SSG") || car.transmission.includes("LDF") || car.transmission.includes("F1")

@@ -44,6 +44,15 @@ export interface Car {
   }[]
 }
 
+// Returns null for missing/unknown placeholder values from the parser
+function nv(v: unknown): string | null {
+  if (v == null) return null
+  const s = String(v).trim()
+  const lower = s.toLowerCase()
+  if (!s || lower === "unknown" || lower === "невідомо") return null
+  return s
+}
+
 export function mapDbCar(row: Record<string, unknown>): Car {
   return {
     id: row.id as string,
@@ -52,15 +61,15 @@ export function mapDbCar(row: Record<string, unknown>): Car {
     year: row.year as number,
     price: Number(row.price),
     mileage: row.mileage as number,
-    engine: row.engine as string,
-    fuel: row.fuel as string,
-    fuelUa: row.fuel_ua as string,
-    drive: row.drive as string,
-    bodyType: row.body_type as string,
-    bodyTypeUa: row.body_type_ua as string,
-    color: row.color as string,
-    colorUa: (row.color_ua as string) ?? null,
-    transmission: row.transmission as string,
+    engine: nv(row.engine) as string,
+    fuel: nv(row.fuel) as string,
+    fuelUa: nv(row.fuel_ua) as string,
+    drive: nv(row.drive) as string,
+    bodyType: nv(row.body_type) as string,
+    bodyTypeUa: nv(row.body_type_ua) as string,
+    color: nv(row.color) as string,
+    colorUa: nv(row.color_ua),
+    transmission: nv(row.transmission) as string,
     horsepower: row.horsepower as number,
     status: row.status as Car["status"],
     statusUa: row.status_ua as string,
@@ -69,19 +78,19 @@ export function mapDbCar(row: Record<string, unknown>): Car {
     gallery: (row.gallery as string[]) ?? [],
     features: (row.features as string[]) ?? [],
     featuresUa: (row.features_ua as string[]) ?? [],
-    vin: (row.vin as string) ?? null,
+    vin: nv(row.vin),
     doors: (row.doors as number) ?? null,
     seats: (row.seats as number) ?? null,
-    seatMaterial: (row.seat_material as string) ?? null,
-    seatMaterialUa: (row.seat_material_ua as string) ?? null,
+    seatMaterial: nv(row.seat_material),
+    seatMaterialUa: nv(row.seat_material_ua),
     safetyFeatures: (row.safety_features as string[]) ?? [],
     comfortFeatures: (row.comfort_features as string[]) ?? [],
     infotainment: (row.infotainment as string[]) ?? [],
-    condition: row.condition as string,
-    conditionUa: (row.condition_ua as string) ?? null,
-    country: row.country as string,
-    countryUa: (row.country_ua as string) ?? null,
-    plateType: (row.plate_type as string) ?? null,
+    condition: nv(row.condition) as string,
+    conditionUa: nv(row.condition_ua),
+    country: nv(row.country) as string,
+    countryUa: nv(row.country_ua),
+    plateType: nv(row.plate_type),
     sourceType: row.source_type as Car["sourceType"],
     history: (row.history as Car["history"]) ?? [],
   }

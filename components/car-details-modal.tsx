@@ -474,19 +474,19 @@ export default function CarDetailsModal({ car, onClose, onCheckout }: CarDetails
   }
 
   const specs = [
-    { icon: Calendar, label: "Рік", value: car.year.toString() },
-    { icon: Gauge, label: "Пробіг", value: formatMileage(car.mileage) },
+    { icon: Calendar, label: "Рік", value: car.year?.toString() },
+    { icon: Gauge, label: "Пробіг", value: car.mileage != null ? formatMileage(car.mileage) : null },
     { icon: Fuel, label: "Паливо", value: car.fuelUa },
     { icon: Settings2, label: "КПП", value: car.transmission },
-    { icon: Zap, label: "Потужність", value: `${car.horsepower} hp` },
+    { icon: Zap, label: "Потужність", value: car.horsepower != null ? `${car.horsepower} hp` : null },
     { icon: Palette, label: "Колір", value: car.colorUa },
-    { icon: Car, label: "Привід", value: car.drive },
+    { icon: Car, label: "Привід", value: car.drive && car.drive !== "unknown" ? car.drive : null },
     { icon: MapPin, label: "Країна", value: car.countryUa },
     { icon: DoorOpen, label: "Дверей", value: car.doors != null ? `${car.doors}` : null },
     { icon: Armchair, label: "Місць", value: car.seats != null ? `${car.seats}` : null },
     { icon: Armchair, label: "Сидіння", value: car.seatMaterialUa },
     { icon: Eye, label: "Стан", value: car.conditionUa },
-  ].filter((s): s is typeof s & { value: string } => s.value != null)
+  ].filter((s): s is typeof s & { value: string } => s.value != null && s.value !== "")
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Огляд" },
