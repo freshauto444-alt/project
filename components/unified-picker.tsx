@@ -69,9 +69,9 @@ const QUESTIONS: Question[] = [
     id: "year",
     icon: Calendar,
     title: "Від якого року випуску?",
-    subtitle: "Оберіть мінімальний рік або напишіть свій",
+    subtitle: "Прокрутіть щоб обрати мінімальний рік",
     multi: false,
-    options: ["2018", "2019", "2020", "2021", "2022", "2023", "2024"],
+    options: [],
   },
   {
     id: "transmission",
@@ -96,11 +96,12 @@ const QUESTIONS: Question[] = [
     subtitle: "Вкажіть діапазон в EUR",
     multi: false,
     options: [
-      "до 15 000 EUR",
-      "15 000 – 30 000 EUR",
-      "30 000 – 60 000 EUR",
-      "60 000 – 100 000 EUR",
-      "понад 100 000 EUR",
+      "20 000 – 25 000 EUR",
+      "25 000 – 30 000 EUR",
+      "30 000 – 40 000 EUR",
+      "40 000 – 60 000 EUR",
+      "60 000 – 80 000 EUR",
+      "понад 80 000 EUR",
     ],
   },
 ]
@@ -135,6 +136,71 @@ function ProgressBar({ current, total }: { current: number; total: number }) {
           animate={{ width: `${((current + 1) / total) * 100}%` }}
           transition={{ duration: 0.45, ease: [0.32, 0.72, 0, 1] }}
         />
+      </div>
+    </div>
+  )
+}
+
+// ─── YearScrollPicker ─────────────────────────────────────────────────────────
+
+const YEAR_ITEM_H = 44
+const CURRENT_YEAR = new Date().getFullYear()
+const YEARS = Array.from({ length: CURRENT_YEAR - 1990 + 1 }, (_, i) => String(CURRENT_YEAR - i))
+
+function YearScrollPicker({ selected, onSelect }: { selected: string; onSelect: (y: string) => void }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const idx = selected ? YEARS.indexOf(selected) : 0
+    if (idx >= 0) el.scrollTop = idx * YEAR_ITEM_H
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleScroll = () => {
+    const el = containerRef.current
+    if (!el) return
+    const idx = Math.round(el.scrollTop / YEAR_ITEM_H)
+    const year = YEARS[Math.max(0, Math.min(idx, YEARS.length - 1))]
+    if (year) onSelect(year)
+  }
+
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-white/[0.07]" style={{ height: 5 * YEAR_ITEM_H }}>
+      {/* Selected row highlight */}
+      <div
+        className="pointer-events-none absolute inset-x-0 z-10 border-y border-[#00e5b4]/20 bg-[#00e5b4]/[0.04]"
+        style={{ top: 2 * YEAR_ITEM_H, height: YEAR_ITEM_H }}
+      />
+
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="h-full overflow-y-scroll"
+        style={{
+          scrollSnapType: "y mandatory",
+          scrollbarWidth: "none",
+          WebkitMaskImage: "linear-gradient(transparent, black 28%, black 72%, transparent)",
+          maskImage: "linear-gradient(transparent, black 28%, black 72%, transparent)",
+        } as React.CSSProperties}
+      >
+        <div style={{ height: 2 * YEAR_ITEM_H }} />
+        {YEARS.map(y => (
+          <div
+            key={y}
+            onClick={() => {
+              const idx = YEARS.indexOf(y)
+              containerRef.current?.scrollTo({ top: idx * YEAR_ITEM_H, behavior: "smooth" })
+            }}
+            style={{ height: YEAR_ITEM_H, scrollSnapAlign: "center" } as React.CSSProperties}
+            className={`flex cursor-pointer items-center justify-center text-base font-semibold transition-colors ${
+              y === selected ? "text-[#00e5b4]" : "text-white/35"
+            }`}
+          >
+            {y}
+          </div>
+        ))}
+        <div style={{ height: 2 * YEAR_ITEM_H }} />
       </div>
     </div>
   )
@@ -185,7 +251,15 @@ function QuestionStep({
   isLast: boolean
 }) {
   const Icon = question.icon
-  const canProceed = answer.selected.length > 0 || answer.custom.trim().length > 0
+  const isYearQuestion = question.id === "year"
+  const canProceed = isYearQuestion || answer.selected.length > 0 || answer.custom.trim().length > 0
+
+  // Auto-select the top year when the year picker first appears
+  useEffect(() => {
+    if (isYearQuestion && answer.selected.length === 0) {
+      onChange({ ...answer, selected: [YEARS[0]] })
+    }
+  }, [isYearQuestion]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = (opt: string) => {
     if (question.multi) {
@@ -217,26 +291,35 @@ function QuestionStep({
         </div>
       </div>
 
-      {/* Options */}
-      <div className="flex flex-wrap gap-2">
-        {question.options.map(opt => (
-          <Chip
-            key={opt}
-            label={opt}
-            selected={answer.selected.includes(opt)}
-            onClick={() => toggle(opt)}
-          />
-        ))}
-      </div>
+      {/* Options or Year Scroll Picker */}
+      {question.id === "year" ? (
+        <YearScrollPicker
+          selected={answer.selected[0] ?? ""}
+          onSelect={y => onChange({ ...answer, selected: [y], custom: "" })}
+        />
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-2">
+            {question.options.map(opt => (
+              <Chip
+                key={opt}
+                label={opt}
+                selected={answer.selected.includes(opt)}
+                onClick={() => toggle(opt)}
+              />
+            ))}
+          </div>
 
-      {/* Custom input */}
-      <input
-        value={answer.custom}
-        onChange={e => onChange({ ...answer, custom: e.target.value })}
-        onKeyDown={e => e.key === "Enter" && onNext()}
-        placeholder="Або напишіть свій варіант..."
-        className="w-full rounded-2xl border border-white/[0.07] bg-white/[0.025] px-4 py-3 text-sm text-white placeholder:text-white/18 outline-none transition-all focus:border-[#00e5b4]/22 focus:bg-white/[0.04]"
-      />
+          {/* Custom input */}
+          <input
+            value={answer.custom}
+            onChange={e => onChange({ ...answer, custom: e.target.value })}
+            onKeyDown={e => e.key === "Enter" && onNext()}
+            placeholder="Або напишіть свій варіант..."
+            className="w-full rounded-2xl border border-white/[0.07] bg-white/[0.025] px-4 py-3 text-sm text-white placeholder:text-white/18 outline-none transition-all focus:border-[#00e5b4]/22 focus:bg-white/[0.04]"
+          />
+        </>
+      )}
 
       {/* Navigation */}
       <div className="flex items-center justify-between pt-1">

@@ -17,11 +17,22 @@ const PARSER_KEY = process.env.PARSER_API_KEY ?? ""
 function extractSearchParams(answers: Answer[]) {
   const byId = Object.fromEntries(answers.map(a => [a.questionId, a]))
   const budgetStr = byId.budget?.selected[0] ?? byId.budget?.custom ?? ""
+  // Parse "X – Y EUR" format → extract both min and max
+  const rangeMatch = budgetStr.match(/([\d\s]+)\s*[–-]\s*([\d\s]+)/)
+  let budgetMin: number | null = null
   let budgetMax: number | null = null
-  if (budgetStr.includes("до"))          budgetMax = 15000
-  else if (budgetStr.includes("15 000")) budgetMax = 30000
-  else if (budgetStr.includes("30 000")) budgetMax = 60000
-  else if (budgetStr.includes("60 000")) budgetMax = 100000
+  if (rangeMatch) {
+    budgetMin = parseInt(rangeMatch[1].replace(/\s/g, ""))
+    budgetMax = parseInt(rangeMatch[2].replace(/\s/g, ""))
+  } else if (budgetStr.includes("понад")) {
+    const m = budgetStr.match(/([\d\s]+)/)
+    budgetMin = m ? parseInt(m[1].replace(/\s/g, "")) : null
+    budgetMax = null
+  } else {
+    // Plain custom number (e.g. "15000")
+    const plain = parseInt(budgetStr.replace(/\D/g, ""))
+    if (!isNaN(plain) && plain > 0) budgetMax = plain
+  }
   const yearStr = byId.year?.selected[0] ?? byId.year?.custom ?? ""
   const yearFrom = yearStr ? parseInt(yearStr) : null
   const fuelMap: Record<string, string> = {
@@ -39,6 +50,7 @@ function extractSearchParams(answers: Answer[]) {
   }
   return {
     year_from: yearFrom && !isNaN(yearFrom) ? yearFrom : null,
+    budget_min: budgetMin,
     budget_max: budgetMax,
     fuel: fuelMap[byId.fuel?.selected[0] ?? ""] ?? null,
     transmission: transmissionMap[byId.transmission?.selected[0] ?? ""] ?? null,
@@ -65,11 +77,12 @@ async function callClaude(systemPrompt: string, messages: ChatMessage[], maxToke
   return data.content?.[0]?.text?.trim() ?? ""
 }
 
+interface CarPair { make: string | null; model: string | null }
+
 async function extractFromChat(messages: ChatMessage[]): Promise<{
-  make: string | null; model: string | null
-  fuel: string | null; body_type: string | null
+  pairs: CarPair[]; fuel: string | null; body_type: string | null; budget: number | null
 }> {
-  const empty = { make: null, model: null, fuel: null, body_type: null }
+  const empty = { pairs: [], fuel: null, body_type: null, budget: null }
   try {
     const userText = messages
       .filter(m => m.role === "user")
@@ -82,30 +95,41 @@ async function extractFromChat(messages: ChatMessage[]): Promise<{
 
     const text = await callClaude(
       `Extract car search preferences from user text (Ukrainian/Russian/English).
+Return JSON with these keys:
+- "pairs": array of {make, model} objects — one per distinct car/brand mentioned
+- "budget": numeric EUR amount if mentioned, else null
+- "fuel": "Petrol","Diesel","Electric","Hybrid" or null
+- "body_type": "sedan","estate","suv","hatchback","coupe","convertible","minivan" or null
+
 Examples:
-"пасат дизель універсал"→{"make":"Volkswagen","model":"Passat","fuel":"Diesel","body_type":"estate"}
-"бмв бензин"→{"make":"BMW","model":null,"fuel":"Petrol","body_type":null}
-"хочу audi a4 автомат"→{"make":"Audi","model":"A4","fuel":null,"body_type":null}
-"седан дизель"→{"make":null,"model":null,"fuel":"Diesel","body_type":"sedan"}
-fuel values: "Petrol","Diesel","Electric","Hybrid" or null
-body_type values: "sedan","estate","suv","hatchback","coupe","convertible","minivan" or null
-Return ONLY valid JSON: {"make":"...","model":"...","fuel":"...","body_type":"..."}`,
+"ауді бмв дизель бюджет 50000"→{"pairs":[{"make":"Audi","model":null},{"make":"BMW","model":null}],"fuel":"Diesel","body_type":null,"budget":50000}
+"пасат або а4 50000"→{"pairs":[{"make":"Volkswagen","model":"Passat"},{"make":"Audi","model":"A4"}],"fuel":null,"body_type":null,"budget":50000}
+"пасат дизель універсал"→{"pairs":[{"make":"Volkswagen","model":"Passat"}],"fuel":"Diesel","body_type":"estate","budget":null}
+"бмв бензин 40000"→{"pairs":[{"make":"BMW","model":null}],"fuel":"Petrol","body_type":null,"budget":40000}
+"седан дизель"→{"pairs":[],"fuel":"Diesel","body_type":"sedan","budget":null}
+
+Return ONLY valid JSON.`,
       [{ role: "user", content: userText }],
-      80,
+      150,
     )
-    const match = text.match(/\{[\s\S]*?\}/)
-    return match ? JSON.parse(match[0]) : empty
+    const match = text.match(/\{[\s\S]*\}/)
+    if (!match) return empty
+    const parsed = JSON.parse(match[0])
+    const pairs: CarPair[] = Array.isArray(parsed.pairs)
+      ? parsed.pairs.filter((p: CarPair) => p.make || p.model)
+      : []
+    return {
+      pairs,
+      fuel: parsed.fuel ?? null,
+      body_type: parsed.body_type ?? null,
+      budget: typeof parsed.budget === "number" ? parsed.budget : null,
+    }
   } catch {
     return empty
   }
 }
-async function triggerParser(
-  answers: Answer[],
-  clientOrderId: string,
-  chat: { make: string | null; model: string | null; fuel: string | null; body_type: string | null },
-) {
-  if (!PARSER_URL) return null
-  const base = extractSearchParams(answers)
+
+async function callParser(payload: Record<string, unknown>): Promise<{ count: number; cars: unknown[] } | null> {
   try {
     const res = await fetch(`${PARSER_URL}/search`, {
       method: "POST",
@@ -113,14 +137,7 @@ async function triggerParser(
         "Content-Type": "application/json",
         ...(PARSER_KEY ? { "x-api-key": PARSER_KEY } : {}),
       },
-      body: JSON.stringify({
-        ...base,
-        make: chat.make,
-        model: chat.model,
-        fuel: chat.fuel ?? base.fuel,
-        body_type: chat.body_type ?? base.body_type,
-        client_order_id: clientOrderId,
-      }),
+      body: JSON.stringify(payload),
     })
     return await res.json()
   } catch (e) {
@@ -128,6 +145,57 @@ async function triggerParser(
     return null
   }
 }
+
+async function triggerParser(
+  answers: Answer[],
+  clientOrderId: string,
+  chat: { pairs: CarPair[]; fuel: string | null; body_type: string | null; budget: number | null },
+) {
+  if (!PARSER_URL) return null
+  const base = extractSearchParams(answers)
+
+  let budgetMin = base.budget_min
+  let budgetMax = base.budget_max
+  if (chat.budget != null) {
+    budgetMin = Math.max(0, chat.budget - 2000)
+    budgetMax = chat.budget + 2000
+  }
+
+  if (budgetMin != null) budgetMin = Math.max(budgetMin, 20000)
+
+  const commonPayload = {
+    year_from: base.year_from,
+    budget_min: budgetMin,
+    budget_max: budgetMax,
+    fuel: chat.fuel ?? base.fuel,
+    transmission: base.transmission,
+    body_type: chat.body_type ?? base.body_type,
+    client_order_id: clientOrderId,
+  }
+
+  const pairs: CarPair[] = chat.pairs.length > 0 ? chat.pairs : [{ make: null, model: null }]
+
+  const results = await Promise.all(
+    pairs.map(p => callParser({ ...commonPayload, make: p.make, model: p.model }))
+  )
+
+  const seenUrls = new Set<string>()
+  const allCars: unknown[] = []
+  for (const r of results) {
+    if (!r) continue
+    for (const car of r.cars ?? []) {
+      const c = car as Record<string, unknown>
+      const key = (c.url ?? c.source_url ?? c.id) as string
+      if (key && seenUrls.has(key)) continue
+      if (key) seenUrls.add(key)
+      allCars.push(car)
+    }
+  }
+
+  return { count: allCars.length, cars: allCars }
+}
+
+const MIN_BUDGET = 20000
 
 export async function POST(req: Request) {
   const { messages, answers, cars, triggerSearch, clientOrderId } = await req.json()
@@ -143,13 +211,30 @@ export async function POST(req: Request) {
     const orderId = clientOrderId ?? crypto.randomUUID()
     const chat = await extractFromChat(messages ?? [])
     console.log("[ai-picker] extracted:", chat)
+
+    // Block search if budget is below minimum
+    const effectiveBudget = chat.budget ?? extractSearchParams(answers).budget_max
+    if (effectiveBudget != null && effectiveBudget < MIN_BUDGET) {
+      return NextResponse.json({
+        message: `Fresh Auto спеціалізується на авто від ${MIN_BUDGET.toLocaleString()} EUR. На жаль, у цьому діапазоні ми не зможемо запропонувати гідні варіанти. Якщо розглядаєте вищий бюджет — будемо раді допомогти. Телефон: 098 708 19 19.`,
+        searching: false,
+        cars: [],
+      })
+    }
+
     const result = await triggerParser(answers, orderId, chat)
     console.log("[ai-picker] parser result:", JSON.stringify(result)?.slice(0, 300))
     const count = result?.count ?? 0
+    const base = extractSearchParams(answers)
+    const budgetLabel = chat.budget
+      ? `${chat.budget - 2000}–${chat.budget + 2000}€`
+      : (base.budget_min && base.budget_max) ? `${base.budget_min}–${base.budget_max}€`
+      : base.budget_max ? `до ${base.budget_max}€` : "—"
+    const makesLabel = chat.pairs.map(p => [p.make, p.model].filter(Boolean).join(" ")).join(", ") || "—"
     return NextResponse.json({
       message: count > 0
         ? `Знайдено ${count} авто під ваші критерії! Перегляньте результати нижче.`
-        : `На жаль, за критеріями (${chat.make ?? "—"} ${chat.model ?? ""}, бюджет ${extractSearchParams(answers).budget_max ? `до ${extractSearchParams(answers).budget_max}€` : "—"}) нічого не знайдено. Спробуйте розширити критерії або зверніться до менеджера: 098 708 19 19.`,
+        : `На жаль, за критеріями (${makesLabel}, бюджет ${budgetLabel}) нічого не знайдено. Спробуйте розширити критерії або зверніться до менеджера: 098 708 19 19.`,
       searching: false,
       cars: result?.cars ?? [],
     })
@@ -161,7 +246,7 @@ export async function POST(req: Request) {
       `${i + 1}. ${c.year} ${c.make} ${c.model} — €${c.price?.toLocaleString()}, ${c.mileage ? Math.round(c.mileage / 1000) + "k km" : "—"}, ${c.fuel_ua || c.fuel || "—"}, ${c.transmission || "—"}`)
     .join("\n") ?? ""
 
-  const systemPrompt = `Ти AI-асистент Fresh Auto — компанія з продажу авто з Європи до України. Спілкуєшся українською, коротко і по справі. БЕЗ емодзі, БЕЗ зірочок, БЕЗ markdown.
+  const systemPrompt = `Ти AI-консультант Fresh Auto — компанія з продажу авто з Європи до України. Спілкуєшся українською, коротко і по справі. БЕЗ емодзі, БЕЗ зірочок, БЕЗ markdown.
 
 Критерії клієнта з анкети: ${tags.join(", ") || "не вказані"}
 
@@ -169,22 +254,25 @@ ${hasNoCars
   ? "ВАЖЛИВО: У каталозі зараз немає авто за цими критеріями."
   : `Авто в каталозі:\n${carsContext}`}
 
-═══ ЛОГІКА РОЗМОВИ ═══
+═══ СТИЛЬ РОБОТИ ═══
+Ти досвідчений консультант. Мета — підібрати авто яке дійсно підійде клієнту.
 
-КРОК 1 — УТОЧНЕННЯ:
-Якщо з анкети або чату НЕ відомо хоча б одне з: марка/тип авто, бюджет — постав 1-2 коротких питання.
-Питай тільки про те що реально невідомо. Не повторюй питань.
-Приклади: "Яку марку або модель розглядаєте?" / "Який бюджет плануєте (EUR)?" / "Кузов важливий — седан, SUV, універсал?"
-Максимум 2 питання за раз.
+ЯКЩО клієнт написав мало або один параметр — уточни 3-4 найважливіших яких не вистачає:
+- "Яку марку розглядаєте?"
+- "Який бюджет плануєте (EUR)?"
+- "Дизель, бензин чи гібрид?"
+- "Важливий рік або пробіг?"
 
-КРОК 2 — БЮДЖЕТ < 20 000 EUR:
-Якщо клієнт називає бюджет менше 20 000 EUR — відповідай:
-"Fresh Auto спеціалізується на авто середнього та преміум сегменту від 20 000 EUR. На жаль, у цьому діапазоні ми не зможемо запропонувати гідні варіанти. Якщо розглядаєте вищий бюджет — будемо раді допомогти з підбором."
+Максимум 3 питання за раз. Не питай про те що вже відомо з анкети вище.
+
+ЯКЩО клієнт дав достатньо (марка або модель + ще 3-4 критерії) — відповідай ТІЛЬКИ словом: TRIGGER_SEARCH
+ЯКЩО клієнт явно хоче загальний пошук ("покажи що є", "давай дивитись", "шукай все") — відповідай ТІЛЬКИ словом: TRIGGER_SEARCH
+ЯКЩО після уточнень клієнт знову просить пошук — відповідай ТІЛЬКИ словом: TRIGGER_SEARCH
+
+═══ БЮДЖЕТ < 20 000 EUR ═══
+Якщо клієнт називає бюджет менше 20 000 EUR:
+"Fresh Auto спеціалізується на авто від 20 000 EUR. На жаль, у цьому діапазоні ми не зможемо запропонувати гідні варіанти. Якщо розглядаєте вищий бюджет — будемо раді допомогти."
 НЕ запускай пошук якщо бюджет < 20 000 EUR.
-
-КРОК 3 — ЗАПУСК ПОШУКУ:
-Якщо відомі основні параметри (марка або тип авто) І бюджет ≥ 20 000 або бюджет не вказаний — відповідай ТІЛЬКИ словом: TRIGGER_SEARCH
-Також TRIGGER_SEARCH якщо клієнт каже: "знайди", "пошукай", "є щось інше?", "покажи більше", "хочу подивитись", або називає конкретну марку/модель.
 
 ═══ ЗАГАЛЬНЕ ═══
 Телефон менеджера: 098 708 19 19.`
