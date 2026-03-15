@@ -388,7 +388,7 @@ function AIChat({
   const [loading, setLoading] = useState(false)
   const [searching, setSearching] = useState(false)
   const [clientOrderId, setClientOrderId] = useState<string | null>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (messages.length > 1) return
@@ -405,7 +405,7 @@ function AIChat({
   }, [cars.length])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+    const el = messagesContainerRef.current; if (el) el.scrollTop = el.scrollHeight
   }, [messages, loading, searching])
 
   // Після того як AI сказав TRIGGER_SEARCH — запускаємо реальний парсер
@@ -485,7 +485,7 @@ function AIChat({
       </div>
 
       {/* Messages */}
-      <div className="flex max-h-72 flex-col gap-2.5 overflow-y-auto p-4 scrollbar-thin">
+      <div ref={messagesContainerRef} className="flex max-h-72 flex-col gap-2.5 overflow-y-auto p-4 scrollbar-thin">
         {messages.map((msg, i) => (
           <motion.div
             key={i}
@@ -524,7 +524,7 @@ function AIChat({
         {/* Банер пошуку на сайтах */}
         {searching && <SearchingBanner />}
 
-        <div ref={bottomRef} />
+        
       </div>
 
       {/* Input */}
