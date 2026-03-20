@@ -27,19 +27,35 @@ const TRANSMISSION_MAP: Record<string, string[]> = {
   "Варіатор": ["Automatic", "automatic", "CVT"],
 }
 
+const BODY_MAP: Record<string, string[]> = {
+  "Універсал":   ["Estate", "Station Wagon"],
+  "Седан":       ["Sedan", "Saloon"],
+  "Позашляховик": ["SUV"],
+  "Хетчбек":     ["Hatchback"],
+  "Купе":        ["Coupe"],
+  "Кабріолет":   ["Convertible"],
+  "Мінівен":     ["Van", "Minivan"],
+}
+
 function parseBudget(budget: string): { min: number | null; max: number | null } {
   if (!budget) return { min: null, max: null }
-  if (budget.includes("до"))       return { min: null, max: 15000 }
-  if (budget.includes("15 000 –")) return { min: 15000, max: 30000 }
-  if (budget.includes("30 000 –")) return { min: 30000, max: 60000 }
-  if (budget.includes("60 000 –")) return { min: 60000, max: 100000 }
-  if (budget.includes("понад"))    return { min: 100000, max: null }
+  const rangeMatch = budget.match(/([\d\s]+)\s*[–-]\s*([\d\s]+)/)
+  if (rangeMatch) {
+    return {
+      min: parseInt(rangeMatch[1].replace(/\s/g, "")),
+      max: parseInt(rangeMatch[2].replace(/\s/g, "")),
+    }
+  }
+  if (budget.includes("понад")) {
+    const m = budget.match(/([\d\s]+)/)
+    return { min: m ? parseInt(m[1].replace(/\s/g, "")) : null, max: null }
+  }
+  const plain = parseInt(budget.replace(/\D/g, ""))
+  if (!isNaN(plain) && plain > 0) return { min: null, max: plain }
   return { min: null, max: null }
 }
 
-// Витягує марку/модель з тексту через Claude Haiku
 async function extractMakeModelFromAnswers(answers: Answer[]): Promise<{ make: string | null; model: string | null }> {
-  // Збираємо весь текст з відповідей — custom поля можуть містити "пасат", "bmw x5" тощо
   const customTexts = answers
     .map(a => a.custom?.trim())
     .filter(Boolean)
@@ -75,15 +91,14 @@ export async function POST(req: Request) {
   const byId = Object.fromEntries(answers.map(a => [a.questionId, a]))
 
   const fuel         = byId.fuel?.selected ?? []
+  const body         = byId.body?.selected ?? []
   const year         = byId.year?.selected[0] ?? byId.year?.custom ?? null
   const transmission = byId.transmission?.selected[0] ?? null
   const budget       = byId.budget?.selected[0] ?? byId.budget?.custom ?? null
 
-  // Витягуємо марку/модель з custom-відповідей
   const { make, model } = await extractMakeModelFromAnswers(answers)
   console.log("[search] extracted make/model:", { make, model })
 
-  // ── Будуємо Supabase query ─────────────────────────────────────────────────
   let query = supabase
     .from("cars")
     .select("*")
@@ -91,31 +106,32 @@ export async function POST(req: Request) {
     .order("created_at", { ascending: false })
     .limit(20)
 
-  // Марка і модель
   if (make) query = query.ilike("make", `%${make}%`)
   if (model) query = query.ilike("model", `%${model}%`)
 
-  // Рік
   if (year) {
     const yearNum = parseInt(year)
     if (!isNaN(yearNum)) query = query.gte("year", yearNum)
   }
 
-  // Бюджет
   const { min: priceMin, max: priceMax } = parseBudget(budget ?? "")
   if (priceMin) query = query.gte("price", priceMin)
   if (priceMax) query = query.lte("price", priceMax)
 
-  // Паливо
   if (fuel.length > 0) {
     const dbFuels = fuel.flatMap(f => FUEL_MAP[f] ?? [f])
     query = query.in("fuel", [...new Set(dbFuels)])
   }
 
-  // Трансмісія
   if (transmission) {
     const dbTrans = TRANSMISSION_MAP[transmission] ?? [transmission]
     query = query.in("transmission", dbTrans)
+  }
+
+  // ── Фільтр по типу кузова ─────────────────────────────────────────────────
+  if (body.length > 0) {
+    const dbBodies = body.flatMap(b => BODY_MAP[b] ?? [b])
+    query = query.in("body_type", [...new Set(dbBodies)])
   }
 
   const { data, error } = await query

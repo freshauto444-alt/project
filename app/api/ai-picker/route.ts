@@ -17,7 +17,6 @@ const PARSER_KEY = process.env.PARSER_API_KEY ?? ""
 function extractSearchParams(answers: Answer[]) {
   const byId = Object.fromEntries(answers.map(a => [a.questionId, a]))
   const budgetStr = byId.budget?.selected[0] ?? byId.budget?.custom ?? ""
-  // Parse "X – Y EUR" format → extract both min and max
   const rangeMatch = budgetStr.match(/([\d\s]+)\s*[–-]\s*([\d\s]+)/)
   let budgetMin: number | null = null
   let budgetMax: number | null = null
@@ -29,7 +28,6 @@ function extractSearchParams(answers: Answer[]) {
     budgetMin = m ? parseInt(m[1].replace(/\s/g, "")) : null
     budgetMax = null
   } else {
-    // Plain custom number (e.g. "15000")
     const plain = parseInt(budgetStr.replace(/\D/g, ""))
     if (!isNaN(plain) && plain > 0) budgetMax = plain
   }
@@ -44,9 +42,9 @@ function extractSearchParams(answers: Answer[]) {
     "Робот": "Automatic", "Варіатор": "Automatic",
   }
   const bodyMap: Record<string, string> = {
-    "Седан": "sedan", "Хетчбек": "hatchback", "Універсал": "estate",
-    "SUV": "suv", "Кросовер": "suv", "Мінівен": "minivan",
-    "Купе": "coupe", "Кабріолет": "convertible",
+    "Седан": "Sedan", "Хетчбек": "Hatchback", "Універсал": "Estate",
+    "Позашляховик": "SUV", "Кросовер": "SUV", "Мінівен": "Van",
+    "Купе": "Coupe", "Кабріолет": "Convertible",
   }
   return {
     year_from: yearFrom && !isNaN(yearFrom) ? yearFrom : null,
@@ -99,14 +97,15 @@ Return JSON with these keys:
 - "pairs": array of {make, model} objects — one per distinct car/brand mentioned
 - "budget": numeric EUR amount if mentioned, else null
 - "fuel": "Petrol","Diesel","Electric","Hybrid" or null
-- "body_type": "sedan","estate","suv","hatchback","coupe","convertible","minivan" or null
+- "body_type": "Sedan","Estate","SUV","Hatchback","Coupe","Convertible","Van" or null
 
 Examples:
 "ауді бмв дизель бюджет 50000"→{"pairs":[{"make":"Audi","model":null},{"make":"BMW","model":null}],"fuel":"Diesel","body_type":null,"budget":50000}
 "пасат або а4 50000"→{"pairs":[{"make":"Volkswagen","model":"Passat"},{"make":"Audi","model":"A4"}],"fuel":null,"body_type":null,"budget":50000}
-"пасат дизель універсал"→{"pairs":[{"make":"Volkswagen","model":"Passat"}],"fuel":"Diesel","body_type":"estate","budget":null}
+"пасат дизель універсал"→{"pairs":[{"make":"Volkswagen","model":"Passat"}],"fuel":"Diesel","body_type":"Estate","budget":null}
 "бмв бензин 40000"→{"pairs":[{"make":"BMW","model":null}],"fuel":"Petrol","body_type":null,"budget":40000}
-"седан дизель"→{"pairs":[],"fuel":"Diesel","body_type":"sedan","budget":null}
+"седан дизель"→{"pairs":[],"fuel":"Diesel","body_type":"Sedan","budget":null}
+"суv автомат"→{"pairs":[],"fuel":null,"body_type":"SUV","budget":null}
 
 Return ONLY valid JSON.`,
       [{ role: "user", content: userText }],
@@ -206,13 +205,12 @@ export async function POST(req: Request) {
     if (a.custom?.trim()) tags.push(a.custom.trim())
   })
 
-  // ── Запуск парсера ────────────────────────────────────────────────────────
+  // ── Запуск парсера (фронтенд надіслав triggerSearch: true) ───────────────
   if (triggerSearch) {
     const orderId = clientOrderId ?? crypto.randomUUID()
     const chat = await extractFromChat(messages ?? [])
-    console.log("[ai-picker] extracted:", chat)
+    console.log("[ai-picker] triggerSearch extracted:", chat)
 
-    // Block search if budget is below minimum
     const effectiveBudget = chat.budget ?? extractSearchParams(answers).budget_max
     if (effectiveBudget != null && effectiveBudget < MIN_BUDGET) {
       return NextResponse.json({
@@ -240,10 +238,11 @@ export async function POST(req: Request) {
     })
   }
 
+  // ── Звичайна розмова ──────────────────────────────────────────────────────
   const hasNoCars = !cars || cars.length === 0
   const carsContext = cars?.slice(0, 6)
     .map((c: any, i: number) =>
-      `${i + 1}. ${c.year} ${c.make} ${c.model} — €${c.price?.toLocaleString()}, ${c.mileage ? Math.round(c.mileage / 1000) + "k km" : "—"}, ${c.fuel_ua || c.fuel || "—"}, ${c.transmission || "—"}`)
+      `${i + 1}. ${c.year} ${c.make} ${c.model} — €${c.price?.toLocaleString()}, ${c.mileage ? Math.round(c.mileage / 1000) + "k km" : "—"}, ${c.fuel_ua || c.fuel || "—"}, ${c.body_type || "—"}, ${c.transmission || "—"}`)
     .join("\n") ?? ""
 
   const systemPrompt = `Ти AI-консультант Fresh Auto — компанія з продажу авто з Європи до України. Спілкуєшся українською, коротко і по справі. БЕЗ емодзі, БЕЗ зірочок, БЕЗ markdown.
@@ -251,23 +250,21 @@ export async function POST(req: Request) {
 Критерії клієнта з анкети: ${tags.join(", ") || "не вказані"}
 
 ${hasNoCars
-  ? "ВАЖЛИВО: У каталозі зараз немає авто за цими критеріями."
-  : `Авто в каталозі:\n${carsContext}`}
+  ? "ВАЖЛИВО: У каталозі Fresh Auto зараз немає авто за цими критеріями."
+  : `Авто в каталозі Fresh Auto:\n${carsContext}`}
 
 ═══ СТИЛЬ РОБОТИ ═══
-Ти досвідчений консультант. Мета — підібрати авто яке дійсно підійде клієнту.
+Ти досвідчений консультант. Спочатку показуєш що є в каталозі. Якщо клієнту не підходить — пропонуєш знайти на зовнішніх майданчиках (AutoScout24, Mobile.de).
 
-ЯКЩО клієнт написав мало або один параметр — уточни 3-4 найважливіших яких не вистачає:
+ЯКЩО клієнт написав мало — уточни 1-2 параметри яких не вистачає:
 - "Яку марку розглядаєте?"
-- "Який бюджет плануєте (EUR)?"
-- "Дизель, бензин чи гібрид?"
-- "Важливий рік або пробіг?"
+- "Який бюджет (EUR)?"
+- "Дизель, бензин чи інше?"
+Максимум 2 питання за раз. Не питай про те що вже відомо з анкети.
 
-Максимум 3 питання за раз. Не питай про те що вже відомо з анкети вище.
-
-ЯКЩО клієнт дав достатньо (марка або модель + ще 3-4 критерії) — відповідай ТІЛЬКИ словом: TRIGGER_SEARCH
-ЯКЩО клієнт явно хоче загальний пошук ("покажи що є", "давай дивитись", "шукай все") — відповідай ТІЛЬКИ словом: TRIGGER_SEARCH
-ЯКЩО після уточнень клієнт знову просить пошук — відповідай ТІЛЬКИ словом: TRIGGER_SEARCH
+ЯКЩО клієнт хоче шукати на інших сайтах, каже "знайди на інших майданчиках", "пошукай в Європі", "є щось іще?" або незадоволений каталогом — відповідай ТІЛЬКИ словом: TRIGGER_SEARCH
+ЯКЩО клієнт дав достатньо параметрів і хоче пошук — відповідай ТІЛЬКИ словом: TRIGGER_SEARCH
+ЯКЩО клієнт явно просить запустити пошук ("знайди", "пошукай", "шукай") — відповідай ТІЛЬКИ словом: TRIGGER_SEARCH
 
 ═══ БЮДЖЕТ < 20 000 EUR ═══
 Якщо клієнт називає бюджет менше 20 000 EUR:
@@ -275,26 +272,21 @@ ${hasNoCars
 НЕ запускай пошук якщо бюджет < 20 000 EUR.
 
 ═══ ЗАГАЛЬНЕ ═══
+Ціна під ключ = ціна авто + мито 10% + акциз 5% + ПДВ 20% + доставка ~2500 EUR.
 Телефон менеджера: 098 708 19 19.`
 
-  // ── Перший запит — детекція тригера (дуже короткий) ──────────────────────
   const triggerCheck = await callClaude(systemPrompt, messages as ChatMessage[], 20)
 
   if (triggerCheck.includes("TRIGGER_SEARCH")) {
     const orderId = crypto.randomUUID()
     return NextResponse.json({
-      message: "Запускаю пошук на AutoScout24, Bytbil, Blocket та Mobile.de за вашими критеріями. Зазвичай займає 1-2 хвилини.",
+      message: "Запускаю пошук на AutoScout24 та Mobile.de за вашими критеріями. Зазвичай займає 30-60 секунд.",
       searching: true,
       clientOrderId: orderId,
     })
   }
 
-  // ── Другий запит — нормальна відповідь (TRIGGER_SEARCH заборонений) ───────
-  const safeSystemPrompt = systemPrompt.replace(
-    /ПРАВИЛО:.*TRIGGER_SEARCH[\s\S]*?НЕ питай уточнень\. НЕ пропонуй зателефонувати замість пошуку\./,
-    "Дай корисну відповідь про авто в каталозі або поради щодо вибору. Не кажи TRIGGER_SEARCH."
-  )
-
+  const safeSystemPrompt = systemPrompt + "\n\nВАЖЛИВО: НЕ використовуй слово TRIGGER_SEARCH у відповіді. Дай корисну відповідь."
   const reply = await callClaude(safeSystemPrompt, messages as ChatMessage[], 400)
   return NextResponse.json({ message: reply || "Вибачте, спробуйте ще раз." })
 }
