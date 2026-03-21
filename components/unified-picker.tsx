@@ -149,6 +149,9 @@ const YEARS = Array.from({ length: CURRENT_YEAR - 1990 + 1 }, (_, i) => String(C
 
 function YearScrollPicker({ selected, onSelect }: { selected: string; onSelect: (y: string) => void }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  // Only commit selection after the user actually interacts with the picker.
+  // Scroll-snap can fire spurious scroll events on mount — ignore those.
+  const hasInteracted = useRef(false)
 
   useEffect(() => {
     const el = containerRef.current
@@ -159,11 +162,13 @@ function YearScrollPicker({ selected, onSelect }: { selected: string; onSelect: 
 
   const handleScroll = () => {
     const el = containerRef.current
-    if (!el) return
+    if (!el || !hasInteracted.current) return
     const idx = Math.round(el.scrollTop / YEAR_ITEM_H)
     const year = YEARS[Math.max(0, Math.min(idx, YEARS.length - 1))]
     if (year) onSelect(year)
   }
+
+  const handleInteract = () => { hasInteracted.current = true }
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-white/[0.07]" style={{ height: 5 * YEAR_ITEM_H }}>
@@ -176,6 +181,8 @@ function YearScrollPicker({ selected, onSelect }: { selected: string; onSelect: 
       <div
         ref={containerRef}
         onScroll={handleScroll}
+        onPointerDown={handleInteract}
+        onTouchStart={handleInteract}
         className="h-full overflow-y-scroll"
         style={{
           scrollSnapType: "y mandatory",
@@ -189,6 +196,7 @@ function YearScrollPicker({ selected, onSelect }: { selected: string; onSelect: 
           <div
             key={y}
             onClick={() => {
+              hasInteracted.current = true
               const idx = YEARS.indexOf(y)
               containerRef.current?.scrollTo({ top: idx * YEAR_ITEM_H, behavior: "smooth" })
             }}
