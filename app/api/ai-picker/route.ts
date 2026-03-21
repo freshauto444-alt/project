@@ -322,7 +322,18 @@ export async function POST(req: Request) {
     const chat = await extractFromChat(messages ?? [])
     console.log("[ai-picker] extracted:", JSON.stringify(chat))
 
-    const effectiveBudget = chat.budget ?? extractSearchParams(answers).budget_max
+    const base = extractSearchParams(answers)
+
+    // Fallback: якщо чат не витягнув параметри — беремо з анкети
+    if (!chat.budget && base.budget_max) chat.budget = base.budget_max
+    if (!chat.fuel && base.fuel) chat.fuel = base.fuel
+    if (!chat.body_type && base.body_type) chat.body_type = base.body_type
+    if (!chat.year_from && base.year_from) chat.year_from = base.year_from
+
+    console.log("[ai-picker] final chat params:", JSON.stringify(chat))
+    console.log("[ai-picker] base params:", JSON.stringify(base))
+
+    const effectiveBudget = chat.budget ?? base.budget_max
     if (effectiveBudget != null && effectiveBudget < MIN_BUDGET) {
       return NextResponse.json({
         message: `Fresh Auto спеціалізується на авто від ${MIN_BUDGET.toLocaleString()} EUR. На жаль, у цьому діапазоні ми не зможемо запропонувати гідні варіанти. Якщо розглядаєте вищий бюджет — будемо раді допомогти. Телефон: 098 708 19 19.`,
