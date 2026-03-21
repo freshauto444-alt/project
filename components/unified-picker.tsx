@@ -69,9 +69,9 @@ const QUESTIONS: Question[] = [
     id: "year",
     icon: Calendar,
     title: "Від якого року випуску?",
-    subtitle: "Прокрутіть щоб обрати мінімальний рік",
+    subtitle: "Оберіть мінімальний рік або напишіть свій",
     multi: false,
-    options: [],
+    options: ["2018", "2019", "2020", "2021", "2022", "2023", "2024"],
   },
   {
     id: "transmission",
@@ -149,6 +149,13 @@ const YEARS = Array.from({ length: CURRENT_YEAR - 1990 + 1 }, (_, i) => String(C
 
 function YearScrollPicker({ selected, onSelect }: { selected: string; onSelect: (y: string) => void }) {
   const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const idx = selected ? YEARS.indexOf(selected) : 0
+    if (idx >= 0) el.scrollTop = idx * YEAR_ITEM_H
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleScroll = () => {
     const el = containerRef.current
@@ -247,7 +254,6 @@ function QuestionStep({
   const isYearQuestion = question.id === "year"
   const canProceed = isYearQuestion || answer.selected.length > 0 || answer.custom.trim().length > 0
 
-
   const toggle = (opt: string) => {
     if (question.multi) {
       const next = answer.selected.includes(opt)
@@ -321,7 +327,10 @@ function QuestionStep({
             </button>
           )}
           <button
-            onClick={onNext}
+            onClick={() => {
+              if (isYearQuestion) onChange({ ...answer, selected: [], custom: "" })
+              onNext()
+            }}
             className="text-sm text-white/20 transition-colors hover:text-white/40 cursor-pointer"
           >
             Пропустити
