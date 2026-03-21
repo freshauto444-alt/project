@@ -102,7 +102,7 @@ export async function POST(req: Request) {
   let query = supabase
     .from("cars")
     .select("*")
-    .eq("status", "Available")
+    .eq("status", "In Stock")
     .order("created_at", { ascending: false })
     .limit(20)
 
