@@ -345,7 +345,6 @@ export async function POST(req: Request) {
     const result = await triggerParser(answers, orderId, chat)
     console.log("[ai-picker] result count:", result?.count)
     const count = result?.count ?? 0
-    const base = extractSearchParams(answers)
     const budgetLabel = chat.budget
       ? `${chat.budget - 2000}–${chat.budget + 2000}€`
       : (base.budget_min && base.budget_max) ? `${base.budget_min}–${base.budget_max}€`
