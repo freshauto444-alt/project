@@ -150,13 +150,6 @@ const YEARS = Array.from({ length: CURRENT_YEAR - 1990 + 1 }, (_, i) => String(C
 function YearScrollPicker({ selected, onSelect }: { selected: string; onSelect: (y: string) => void }) {
   const containerRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const idx = selected ? YEARS.indexOf(selected) : 0
-    if (idx >= 0) el.scrollTop = idx * YEAR_ITEM_H
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
   const handleScroll = () => {
     const el = containerRef.current
     if (!el) return
@@ -254,12 +247,6 @@ function QuestionStep({
   const isYearQuestion = question.id === "year"
   const canProceed = isYearQuestion || answer.selected.length > 0 || answer.custom.trim().length > 0
 
-  // Auto-select the top year when the year picker first appears
-  useEffect(() => {
-    if (isYearQuestion && answer.selected.length === 0) {
-      onChange({ ...answer, selected: [YEARS[0]] })
-    }
-  }, [isYearQuestion]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = (opt: string) => {
     if (question.multi) {
