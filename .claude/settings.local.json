@@ -8,7 +8,8 @@
       "Bash(wc -l \"/home/mixtc/Завантажене/Telegram Desktop/b_ZCnKcHpz1m7-1772363754201\"/app/page.tsx \"/home/mixtc/Завантажене/Telegram Desktop/b_ZCnKcHpz1m7-1772363754201\"/components/*.tsx)",
       "Bash(\"/home/mixtc/Завантажене/Telegram Desktop/b_ZCnKcHpz1m7-1772363754201/app/about/page.tsx\":*)",
       "Bash(\"/home/mixtc/Завантажене/Telegram Desktop/b_ZCnKcHpz1m7-1772363754201/app/contacts/page.tsx\":*)",
-      "Bash(\"/home/mixtc/Завантажене/Telegram Desktop/b_ZCnKcHpz1m7-1772363754201/app/services/page.tsx\":*)"
+      "Bash(\"/home/mixtc/Завантажене/Telegram Desktop/b_ZCnKcHpz1m7-1772363754201/app/services/page.tsx\":*)",
+      "Bash(ls -lh /home/mixtc/Стільниця/parser_file/parsers/*.py)"
     ]
   }
 }
