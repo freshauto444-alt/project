@@ -401,13 +401,19 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
         // "A4" matches "A4", "A4 Avant"
         return modelsRequested.some(reqModel => {
           const reqParts = reqModel.split(/\s+/)
-          const reqCore = reqParts[0] // "5" from "5 Series", "A4" from "A4"
-          return (
-            carModel.includes(reqModel) ||
-            carModel.startsWith(reqCore) ||
-            // BMW specific: "5 Series" should match "520", "530", "540" etc.
-            (reqCore.match(/^\d$/) && carModel.match(new RegExp(`^${reqCore}\\d`)))
-          )
+          const reqCore = reqParts[0] // "5" from "5 Series", "m5" from "m5"
+          const escaped = reqModel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+          // Word-boundary match: "m5" must NOT match "m50", "m50d", etc.
+          if (new RegExp(`\\b${escaped}\\b`).test(carModel)) return true
+
+          // BMW numeric series: "5 series" matches "520d", "530i", "5er", etc.
+          if (reqCore.match(/^\d+$/) && (
+            carModel.match(new RegExp(`^${reqCore}[\\s\\d]`)) ||
+            carModel === reqCore
+          )) return true
+
+          return false
         })
       })
     }
@@ -468,7 +474,9 @@ function describeFilters(chat: ChatPreferences, base: ReturnType<typeof extractS
   if (chat.fuel) parts.push(chat.fuel)
   if (chat.body_type) parts.push(chat.body_type)
   if (chat.transmission) parts.push(chat.transmission)
-  if (chat.year_from) parts.push(`від ${chat.year_from}`)
+  if (chat.year_from && chat.year_to) parts.push(`${chat.year_from}–${chat.year_to}`)
+  else if (chat.year_from) parts.push(`від ${chat.year_from}`)
+  else if (chat.year_to) parts.push(`до ${chat.year_to}`)
 
   const bMin = chat.budget_min ?? base.budget_min
   const bMax = chat.budget_max ?? base.budget_max

@@ -200,6 +200,7 @@ function YearScrollPicker({
         onScroll={handleScroll}
         onPointerDown={handleInteract}
         onTouchStart={handleInteract}
+        onWheel={handleInteract}
         className="h-full overflow-y-scroll"
         style={{
           scrollSnapType: "y mandatory",
