@@ -537,14 +537,16 @@ const CarCard = memo(function CarCard({
       {/* Image */}
       <div className="relative aspect-[16/9] overflow-hidden cursor-pointer" onClick={() => onGallery(car, 0)}>
         {!loaded && <div className="absolute inset-0 animate-pulse bg-muted/50 rounded-t-2xl" />}
-        <img
-          ref={imgRef}
-          src={car.image}
-          alt={`${car.make} ${car.model}`}
-          className={`h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] ${loaded ? "opacity-100" : "opacity-0"}`}
-          loading="lazy"
-          onLoad={() => setLoaded(true)}
-        />
+        {car.image && (
+          <img
+            ref={imgRef}
+            src={car.image}
+            alt={`${car.make} ${car.model}`}
+            className={`h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] ${loaded ? "opacity-100" : "opacity-0"}`}
+            loading="lazy"
+            onLoad={() => setLoaded(true)}
+          />
+        )}
         {/* Gradient overlay */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
 
@@ -647,14 +649,16 @@ const CarListItem = memo(function CarListItem({
           onClick={() => onGallery(car, 0)}
         >
           {!imgLoaded && <div className="absolute inset-0 animate-pulse bg-white/[0.04]" />}
-          <img
-            ref={imgRef}
-            src={car.image}
-            alt={`${car.make} ${car.model}`}
-            className={`h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] ${imgLoaded ? "opacity-100" : "opacity-0"}`}
-            loading="lazy"
-            onLoad={() => setImgLoaded(true)}
-          />
+          {car.image && (
+            <img
+              ref={imgRef}
+              src={car.image}
+              alt={`${car.make} ${car.model}`}
+              className={`h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] ${imgLoaded ? "opacity-100" : "opacity-0"}`}
+              loading="lazy"
+              onLoad={() => setImgLoaded(true)}
+            />
+          )}
           {/* Badges on image */}
           <div className="absolute top-3 left-3 flex items-center gap-1.5">
             {car.verified && (

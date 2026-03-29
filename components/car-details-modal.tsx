@@ -170,7 +170,7 @@ function InteractiveViewer({ car, onOpenGallery }: { car: CarType; onOpenGallery
         className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl bg-[#080808] cursor-grab active:cursor-grabbing select-none"
       >
         <div className="absolute inset-0 flex items-center justify-center" style={{ transform: `perspective(1000px) rotateY(${rotation}deg)` }}>
-          <img src={car.image} alt={`${car.make} ${car.model}`} crossOrigin="anonymous" className="h-full w-full object-cover" draggable={false} />
+          {car.image && <img src={car.image} alt={`${car.make} ${car.model}`} crossOrigin="anonymous" className="h-full w-full object-cover" draggable={false} />}
         </div>
         <div className="absolute inset-0 bg-gradient-to-t from-[#080808]/60 via-transparent to-transparent" />
         <div className="absolute bottom-3 left-3 flex items-center gap-1.5 text-[10px] text-white/50">

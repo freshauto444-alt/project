@@ -459,7 +459,7 @@ function SearchingBanner() {
   )
 }
 
-// ─── AIChat ───────────────────────────────────────────────────────────────────
+// ─── AIChat (замінити ТІЛЬКИ цей компонент в unified-picker.tsx) ──────────────
 
 function AIChat({
   answers,
@@ -475,6 +475,7 @@ function AIChat({
   const [loading, setLoading] = useState(false)
   const [searching, setSearching] = useState(false)
   const [clientOrderId, setClientOrderId] = useState<string | null>(null)
+  const [chatPreferences, setChatPreferences] = useState<any>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -484,18 +485,19 @@ function AIChat({
       tags.length > 0
         ? `Знайдено ${cars.length} варіантів за вашими критеріями (${tags.slice(0, 3).join(", ")}${tags.length > 3 ? " та інші" : ""}).${
             cars.length === 0
-              ? " Можу запустити пошук на Bytbil, Blocket, AutoScout24 та Mobile.de — знайдемо свіжі авто під ваш запит."
-              : " Можу детально розповісти про будь-яке авто або допомогти уточнити підбір."
+              ? " Можу запустити пошук на європейських майданчиках — зазвичай знаходжу 15-30 свіжих варіантів. Скажіть що шукаєте."
+              : " Можу детально розповісти про будь-яке авто або уточнити підбір."
           }`
-        : "Привіт! Я AI-асистент Fresh Auto. Розкажіть що шукаєте — і я підберу найкращі варіанти."
+        : "Вітаю! Я AI-консультант Fresh Auto. Розкажіть що шукаєте — марку, бюджет, тип кузова — і я підберу варіанти з європейських майданчиків."
     setMessages([{ role: "assistant", content: intro }])
   }, [cars.length])
 
   useEffect(() => {
-    const el = messagesContainerRef.current; if (el) el.scrollTop = el.scrollHeight
+    const el = messagesContainerRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [messages, loading, searching])
 
-  // Після того як AI сказав TRIGGER_SEARCH — запускаємо реальний парсер
+  // Запуск парсера з передачею chatPreferences
   const runSearch = async (orderId: string, fullMessages: ChatMessage[]) => {
     setSearching(true)
     try {
@@ -508,13 +510,18 @@ function AIChat({
           cars: [],
           triggerSearch: true,
           clientOrderId: orderId,
+          chatPreferences, // Pass previous preferences for cumulative search
         }),
       })
       const data = await res.json()
       setMessages(m => [...m, { role: "assistant", content: data.message }])
+      if (data.chatPreferences) setChatPreferences(data.chatPreferences)
       onNewCars(data.cars ?? [])
     } catch {
-      setMessages(m => [...m, { role: "assistant", content: "Помилка під час пошуку. Спробуйте ще раз." }])
+      setMessages(m => [
+        ...m,
+        { role: "assistant", content: "Виникла помилка під час пошуку. Спробуйте ще раз." },
+      ])
     } finally {
       setSearching(false)
     }
@@ -531,11 +538,19 @@ function AIChat({
       const res = await fetch("/api/ai-picker", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, answers, cars: cars.slice(0, 8) }),
+        body: JSON.stringify({
+          messages: next,
+          answers,
+          cars: cars.slice(0, 8),
+          chatPreferences, // Always pass current preferences
+        }),
       })
       const data = await res.json()
 
-      // AI вирішив запустити парсер
+      // Update preferences if returned
+      if (data.chatPreferences) setChatPreferences(data.chatPreferences)
+
+      // AI decided to search
       if (data.searching && data.clientOrderId) {
         setMessages(m => [...m, { role: "assistant", content: data.message }])
         setClientOrderId(data.clientOrderId)
@@ -543,9 +558,15 @@ function AIChat({
         return
       }
 
-      setMessages(m => [...m, { role: "assistant", content: data.message ?? "Вибачте, спробуйте ще раз." }])
+      setMessages(m => [
+        ...m,
+        { role: "assistant", content: data.message ?? "Перепрошую, спробуйте ще раз." },
+      ])
     } catch {
-      setMessages(m => [...m, { role: "assistant", content: "Сталася помилка. Спробуйте ще раз." }])
+      setMessages(m => [
+        ...m,
+        { role: "assistant", content: "Сталася помилка. Спробуйте ще раз." },
+      ])
     } finally {
       setLoading(false)
     }
@@ -559,20 +580,23 @@ function AIChat({
           <Sparkles className="h-3.5 w-3.5 text-[#00e5b4]" />
         </div>
         <div>
-          <div className="text-sm font-medium text-white">AI-асистент</div>
+          <div className="text-sm font-medium text-white">Олексій — AI-консультант</div>
           <div className="flex items-center gap-1 text-[10px] text-white/22">
             <motion.span
               animate={{ opacity: searching ? [0.4, 1, 0.4] : 1 }}
               transition={{ duration: 1.2, repeat: searching ? Infinity : 0 }}
               className={`h-1.5 w-1.5 rounded-full ${searching ? "bg-amber-400" : "bg-[#00e5b4]/55"}`}
             />
-            {searching ? "Шукаю авто…" : "Fresh Auto • онлайн"}
+            {searching ? "Шукаю авто на майданчиках…" : "Fresh Auto • онлайн"}
           </div>
         </div>
       </div>
 
       {/* Messages */}
-      <div ref={messagesContainerRef} className="flex max-h-72 flex-col gap-2.5 overflow-y-auto p-4 scrollbar-thin">
+      <div
+        ref={messagesContainerRef}
+        className="flex max-h-72 flex-col gap-2.5 overflow-y-auto p-4 scrollbar-thin"
+      >
         {messages.map((msg, i) => (
           <motion.div
             key={i}
@@ -592,7 +616,6 @@ function AIChat({
           </motion.div>
         ))}
 
-        {/* Звичайний typing indicator */}
         {loading && !searching && (
           <div className="flex justify-start">
             <div className="flex items-center gap-1 rounded-2xl rounded-tl-sm bg-white/[0.04] px-3.5 py-3">
@@ -608,10 +631,7 @@ function AIChat({
           </div>
         )}
 
-        {/* Банер пошуку на сайтах */}
         {searching && <SearchingBanner />}
-
-        
       </div>
 
       {/* Input */}
@@ -621,7 +641,7 @@ function AIChat({
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === "Enter" && send()}
           disabled={searching}
-          placeholder={searching ? "Шукаю авто на майданчиках…" : "Задайте питання про авто..."}
+          placeholder={searching ? "Шукаю авто на майданчиках…" : "Напишіть що шукаєте..."}
           className="flex-1 rounded-xl border border-white/[0.06] bg-white/[0.025] px-3.5 py-2.5 text-sm text-white placeholder:text-white/18 outline-none transition-all focus:border-[#00e5b4]/22 disabled:opacity-40"
         />
         <motion.button

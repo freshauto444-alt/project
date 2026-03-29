@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server"
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Types
+// ═══════════════════════════════════════════════════════════════════════════════
+
 interface ChatMessage {
   role: "user" | "assistant"
   content: string
@@ -11,9 +15,38 @@ interface Answer {
   custom: string
 }
 
+interface CarPair {
+  make: string | null
+  model: string | null
+}
+
+interface ChatPreferences {
+  pairs: CarPair[]
+  fuel: string | null
+  body_type: string | null
+  budget: number | null
+  budget_min: number | null
+  budget_max: number | null
+  color: string | null
+  mileage_max: number | null
+  mileage_min: number | null
+  required_options: string[]
+  year_from: number | null
+  transmission: string | null
+  offset?: number
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Config
+// ═══════════════════════════════════════════════════════════════════════════════
+
 const PARSER_URL = process.env.PARSER_API_URL ?? ""
 const PARSER_KEY = process.env.PARSER_API_KEY ?? ""
 const MIN_BUDGET = 20000
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Aliases & Maps
+// ═══════════════════════════════════════════════════════════════════════════════
 
 const COLOR_ALIASES: Record<string, string> = {
   "чорний": "Black", "чорна": "Black", "черный": "Black", "black": "Black",
@@ -32,26 +65,17 @@ const COLOR_ALIASES: Record<string, string> = {
 const BRAND_ALIASES: Record<string, string> = {
   "ваг": "Volkswagen", "ваг група": "Volkswagen", "вольксваген": "Volkswagen",
   "фольксваген": "Volkswagen", "фольк": "Volkswagen", "vw": "Volkswagen",
-  "бмв": "BMW",
+  "бмв": "BMW", "бэмвэ": "BMW",
   "мерс": "Mercedes-Benz", "мерседес": "Mercedes-Benz", "мерсик": "Mercedes-Benz",
-  "ауді": "Audi",
-  "тойота": "Toyota",
-  "шкода": "Skoda",
-  "вольво": "Volvo",
-  "кіа": "Kia",
-  "хюндай": "Hyundai", "хундай": "Hyundai",
-  "форд": "Ford",
-  "пежо": "Peugeot",
-  "рено": "Renault",
-  "опель": "Opel",
-  "порше": "Porsche",
-  "тесла": "Tesla",
-  "лексус": "Lexus",
-  "субару": "Subaru",
-  "мазда": "Mazda",
-  "нісан": "Nissan",
-  "альфа": "Alfa Romeo",
-  "ситроен": "Citroen",
+  "ауді": "Audi", "ауди": "Audi",
+  "тойота": "Toyota", "шкода": "Skoda", "škoda": "Skoda",
+  "вольво": "Volvo", "кіа": "Kia", "кия": "Kia",
+  "хюндай": "Hyundai", "хундай": "Hyundai", "хендай": "Hyundai",
+  "форд": "Ford", "пежо": "Peugeot", "рено": "Renault",
+  "опель": "Opel", "порше": "Porsche", "тесла": "Tesla",
+  "лексус": "Lexus", "субару": "Subaru", "мазда": "Mazda",
+  "нісан": "Nissan", "ніссан": "Nissan", "альфа": "Alfa Romeo",
+  "ситроен": "Citroen", "сітроен": "Citroen",
 }
 
 function normalizeBrand(raw: string): string {
@@ -64,12 +88,12 @@ function normalizeColor(text: string): string | null {
   for (const word of words) {
     if (COLOR_ALIASES[word]) return COLOR_ALIASES[word]
   }
-  for (let i = 0; i < words.length - 1; i++) {
-    const phrase = `${words[i]} ${words[i + 1]}`
-    if (COLOR_ALIASES[phrase]) return COLOR_ALIASES[phrase]
-  }
   return null
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Extract params from survey answers
+// ═══════════════════════════════════════════════════════════════════════════════
 
 function extractSearchParams(answers: Answer[]) {
   const byId = Object.fromEntries(answers.map(a => [a.questionId, a]))
@@ -114,7 +138,15 @@ function extractSearchParams(answers: Answer[]) {
   }
 }
 
-async function callClaude(systemPrompt: string, messages: ChatMessage[], maxTokens: number): Promise<string> {
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Claude API
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function callClaude(
+  systemPrompt: string,
+  messages: ChatMessage[],
+  maxTokens: number,
+): Promise<string> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -133,28 +165,21 @@ async function callClaude(systemPrompt: string, messages: ChatMessage[], maxToke
   return data.content?.[0]?.text?.trim() ?? ""
 }
 
-interface CarPair {
-  make: string | null
-  model: string | null
-}
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Extract preferences from chat — CUMULATIVE
+// ═══════════════════════════════════════════════════════════════════════════════
 
-interface ChatPreferences {
-  pairs: CarPair[]
-  fuel: string | null
-  body_type: string | null
-  budget: number | null
-  color: string | null
-  mileage_max: number | null
-  required_options: string[]
-  year_from: number | null
-  offset?: number
-}
-
-async function extractFromChat(messages: ChatMessage[]): Promise<ChatPreferences> {
+async function extractFromChat(
+  messages: ChatMessage[],
+  previous: ChatPreferences | null,
+): Promise<ChatPreferences> {
   const empty: ChatPreferences = {
     pairs: [], fuel: null, body_type: null, budget: null,
-    color: null, mileage_max: null, required_options: [], year_from: null,
+    budget_min: null, budget_max: null,
+    color: null, mileage_max: null, mileage_min: null,
+    required_options: [], year_from: null, transmission: null,
   }
+
   try {
     const userText = messages
       .filter(m => m.role === "user")
@@ -163,28 +188,60 @@ async function extractFromChat(messages: ChatMessage[]): Promise<ChatPreferences
       .join(" | ")
       .trim()
 
-    if (!userText) return empty
+    if (!userText) return previous ?? empty
+
+    // Include previous preferences as context for the AI
+    const prevContext = previous
+      ? `\nПопередні параметри клієнта (ЗБЕРІГАЙ якщо не змінено): ${JSON.stringify(previous)}`
+      : ""
 
     const text = await callClaude(
-      `Extract car search preferences from Ukrainian/Russian/English text.
-Return JSON:
-- "pairs": [{make, model}] — all mentioned brands/models. "ваг група"→"Volkswagen", "бмв"→"BMW", "мерс"→"Mercedes-Benz", "ауді"→"Audi"
-- "budget": number EUR or null
-- "fuel": "Petrol"|"Diesel"|"Electric"|"Hybrid" or null
-- "body_type": "Sedan"|"Estate"|"SUV"|"Hatchback"|"Coupe"|"Convertible"|"Van" or null
-- "color": Black/White/Grey/Blue/Red/Green/Brown/Beige/Silver/Orange/Yellow or null
-- "mileage_max": km or null ("до 100к"→100000, "до 150 тис"→150000)
-- "required_options": ["leather","panorama","carplay","navigation","camera","heated seats"] or []
-- "year_from": number or null
+      `Ти витягуєш параметри пошуку авто з ОСТАННЬОГО повідомлення клієнта, враховуючи контекст розмови.
+Клієнт пише українською/російською/англійською.
+${prevContext}
 
-Return ONLY valid JSON.`,
+КРИТИЧНІ ПРАВИЛА:
+1. Якщо клієнт ДОДАЄ параметр — зберігай попередні, додай новий
+2. Якщо клієнт ЗМІНЮЄ параметр — заміни тільки його
+3. Якщо клієнт СКАСОВУЄ параметр ("без пробігу", "без урахування пробігу", "будь-який пробіг", "неважливо") → постав ЯВНО null
+4. "пробіг більше 150к" / "від 150 тис км" → mileage_min: 150000, mileage_max: null
+5. "пробіг до 100к" → mileage_max: 100000, mileage_min: null
+6. "від 100 000" (в контексті пробігу) → mileage_min: 100000
+7. "без пробігу" / "будь-який пробіг" / "без урахування пробігу" → mileage_min: null, mileage_max: null
+
+МАРКИ ТА МОДЕЛІ:
+- "бмв 5 серії" / "bmw 5" / "п'ятірка бмв" → make: "BMW", model: "5 Series"
+- "бмв 3" / "трійка бмв" → make: "BMW", model: "3 Series"  
+- "бмв х5" / "ікс п'ять" → make: "BMW", model: "X5"
+- "ауді а4" → make: "Audi", model: "A4"
+- "пасат" → make: "Volkswagen", model: "Passat"
+- "октавія" / "октавия" → make: "Skoda", model: "Octavia"
+- "мазда 6" → make: "Mazda", model: "6"
+
+Поверни JSON (ОБОВ'ЯЗКОВО усі поля, null якщо не задано або скасовано):
+{
+  "pairs": [{"make": "...", "model": "..."}],
+  "budget": число EUR або null,
+  "fuel": "Petrol"|"Diesel"|"Electric"|"Hybrid" або null,
+  "body_type": "Sedan"|"Estate"|"SUV"|"Hatchback"|"Coupe"|"Convertible"|"Van" або null,
+  "transmission": "Automatic"|"Manual" або null,
+  "color": "Black"|"White"|"Grey"|"Blue"|"Red" тощо або null,
+  "mileage_max": число км або null (ЯВНО null якщо скасовано),
+  "mileage_min": число км або null (ЯВНО null якщо скасовано),
+  "required_options": ["leather","panorama","carplay","navigation","camera","heated seats"] або [],
+  "year_from": число або null
+}
+
+Поверни ТІЛЬКИ JSON.`,
       [{ role: "user", content: userText }],
-      200,
+      300,
     )
+
     const match = text.match(/\{[\s\S]*\}/)
-    if (!match) return empty
+    if (!match) return previous ?? empty
     const parsed = JSON.parse(match[0])
 
+    // Normalize brands
     const pairs: CarPair[] = Array.isArray(parsed.pairs)
       ? parsed.pairs
           .filter((p: any) => p.make || p.model)
@@ -192,30 +249,58 @@ Return ONLY valid JSON.`,
             make: p.make ? normalizeBrand(p.make) : null,
             model: p.model ?? null,
           }))
-      : []
+      : previous?.pairs ?? []
 
+    // Color from AI or fallback from text
     let color = parsed.color ?? null
     if (!color) {
-      const fullText = messages.filter(m => m.role === "user").slice(-8).map(m => m.content).join(" ")
+      const fullText = messages.filter(m => m.role === "user").slice(-3).map(m => m.content).join(" ")
       color = normalizeColor(fullText)
     }
 
-    return {
-      pairs,
-      fuel: parsed.fuel ?? null,
-      body_type: parsed.body_type ?? null,
-      budget: typeof parsed.budget === "number" ? parsed.budget : null,
-      color,
-      mileage_max: typeof parsed.mileage_max === "number" ? parsed.mileage_max : null,
-      required_options: Array.isArray(parsed.required_options) ? parsed.required_options : [],
-      year_from: typeof parsed.year_from === "number" ? parsed.year_from : null,
+    // Merge with previous — RESPECT explicit nulls from AI (for parameter resets)
+    const prev = previous ?? empty
+
+    // Helper: if key exists in parsed AND is null → user cancelled it → use null
+    // If key exists AND has value → user set it → use value
+    // If key missing → AI didn't mention it → keep previous
+    const mergeField = <T,>(key: string, prevVal: T): T | null => {
+      if (key in parsed) return parsed[key] as T | null  // explicit null or new value
+      return prevVal  // not mentioned → keep previous
     }
-  } catch {
-    return empty
+
+    return {
+      pairs: pairs.length > 0 ? pairs : prev.pairs,
+      fuel: mergeField("fuel", prev.fuel),
+      body_type: mergeField("body_type", prev.body_type),
+      budget: typeof parsed.budget === "number" ? parsed.budget : prev.budget,
+      budget_min: prev.budget_min,
+      budget_max: prev.budget_max,
+      color: "color" in parsed ? (parsed.color ?? null) : (color ?? prev.color),
+      mileage_max: mergeField("mileage_max", prev.mileage_max),
+      mileage_min: mergeField("mileage_min", prev.mileage_min),
+      required_options: Array.isArray(parsed.required_options) && parsed.required_options.length > 0
+        ? parsed.required_options
+        : ("required_options" in parsed && parsed.required_options === null) ? []
+        : prev.required_options,
+      year_from: "year_from" in parsed
+        ? (typeof parsed.year_from === "number" ? parsed.year_from : null)
+        : prev.year_from,
+      transmission: mergeField("transmission", prev.transmission),
+    }
+  } catch (e) {
+    console.error("[extractFromChat]", e)
+    return previous ?? empty
   }
 }
 
-async function callParser(payload: Record<string, unknown>): Promise<{ count: number; cars: unknown[] } | null> {
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Parser API call
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function callParser(
+  payload: Record<string, unknown>,
+): Promise<{ count: number; cars: any[] } | null> {
   if (!PARSER_URL) return null
   try {
     const res = await fetch(`${PARSER_URL}/search`, {
@@ -237,14 +322,14 @@ async function triggerParser(
   answers: Answer[],
   clientOrderId: string,
   chat: ChatPreferences,
-  offset: number = 0,
 ) {
   if (!PARSER_URL) return null
   const base = extractSearchParams(answers)
 
-  let budgetMin = base.budget_min
-  let budgetMax = base.budget_max
-  if (chat.budget != null && base.budget_min == null && base.budget_max == null) {
+  // Budget: chat preferences > survey answers
+  let budgetMin = chat.budget_min ?? base.budget_min
+  let budgetMax = chat.budget_max ?? base.budget_max
+  if (chat.budget != null && budgetMin == null && budgetMax == null) {
     const margin = Math.round(chat.budget * 0.05)
     budgetMin = Math.max(0, chat.budget - margin)
     budgetMax = chat.budget + margin
@@ -256,39 +341,155 @@ async function triggerParser(
     budget_min: budgetMin,
     budget_max: budgetMax,
     fuel: chat.fuel ?? base.fuel,
-    transmission: base.transmission,
+    transmission: chat.transmission ?? base.transmission,
     body_type: chat.body_type ?? base.body_type,
-    color: chat.color,
-    mileage_max: chat.mileage_max,
-    required_options: chat.required_options,
     client_order_id: clientOrderId,
-    offset,
   }
 
   const pairs: CarPair[] = chat.pairs.length > 0 ? chat.pairs : [{ make: null, model: null }]
 
   const results = await Promise.all(
-    pairs.map(p => callParser({ ...commonPayload, make: p.make, model: p.model }))
+    pairs.map(p => callParser({ ...commonPayload, make: p.make, model: p.model })),
   )
 
+  // Deduplicate
   const seenUrls = new Set<string>()
-  const allCars: unknown[] = []
+  let allCars: any[] = []
   for (const r of results) {
     if (!r) continue
     for (const car of r.cars ?? []) {
-      const c = car as Record<string, unknown>
-      const key = (c.url ?? c.source_url ?? c.id) as string
+      const key = (car.url ?? car.source_url ?? car.id) as string
       if (key && seenUrls.has(key)) continue
       if (key) seenUrls.add(key)
       allCars.push(car)
     }
   }
 
+  // ── Client-side filtering (params that parser doesn't support) ──────────
+  allCars = filterCarsClientSide(allCars, chat)
+
   return { count: allCars.length, cars: allCars }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Client-side filtering — mileage, color, options
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
+  let filtered = [...cars]
+
+  // Model filter — if specific model requested, filter results
+  if (prefs.pairs.length > 0) {
+    const modelsRequested = prefs.pairs
+      .filter(p => p.model)
+      .map(p => p.model!.toLowerCase())
+    
+    if (modelsRequested.length > 0) {
+      filtered = filtered.filter(c => {
+        const carModel = (c.model ?? "").toLowerCase()
+        const carMake = (c.make ?? "").toLowerCase()
+        // Match if car model contains any of the requested models
+        // "5 Series" matches "520d", "530i", "5 Series"
+        // "A4" matches "A4", "A4 Avant"
+        return modelsRequested.some(reqModel => {
+          const reqParts = reqModel.split(/\s+/)
+          const reqCore = reqParts[0] // "5" from "5 Series", "A4" from "A4"
+          return (
+            carModel.includes(reqModel) ||
+            carModel.startsWith(reqCore) ||
+            // BMW specific: "5 Series" should match "520", "530", "540" etc.
+            (reqCore.match(/^\d$/) && carModel.match(new RegExp(`^${reqCore}\\d`)))
+          )
+        })
+      })
+    }
+  }
+
+  // Mileage max
+  if (prefs.mileage_max) {
+    filtered = filtered.filter(c => {
+      const km = c.mileage ?? c.mileage_km
+      return !km || km <= prefs.mileage_max!
+    })
+  }
+
+  // Mileage min
+  if (prefs.mileage_min) {
+    filtered = filtered.filter(c => {
+      const km = c.mileage ?? c.mileage_km
+      return !km || km >= prefs.mileage_min!
+    })
+  }
+
+  // Color
+  if (prefs.color) {
+    filtered = filtered.filter(c => {
+      if (!c.color || c.color === "Unknown") return true // keep if unknown
+      return c.color.toLowerCase() === prefs.color!.toLowerCase()
+    })
+  }
+
+  // Required options
+  if (prefs.required_options.length > 0) {
+    filtered = filtered.filter(c => {
+      const allFeatures = [
+        ...(c.safety_features ?? []),
+        ...(c.comfort_features ?? []),
+        ...(c.infotainment ?? []),
+        ...(c.features_ua ?? []),
+      ].map((f: string) => f.toLowerCase())
+
+      return prefs.required_options.every(opt => {
+        const optLower = opt.toLowerCase()
+        return allFeatures.some(f => f.includes(optLower))
+      })
+    })
+  }
+
+  return filtered
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Build description of active filters
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function describeFilters(chat: ChatPreferences, base: ReturnType<typeof extractSearchParams>): string {
+  const parts: string[] = []
+  const makes = chat.pairs.map(p => [p.make, p.model].filter(Boolean).join(" ")).join(", ")
+  if (makes) parts.push(makes)
+  if (chat.fuel) parts.push(chat.fuel)
+  if (chat.body_type) parts.push(chat.body_type)
+  if (chat.transmission) parts.push(chat.transmission)
+  if (chat.year_from) parts.push(`від ${chat.year_from}`)
+
+  const bMin = chat.budget_min ?? base.budget_min
+  const bMax = chat.budget_max ?? base.budget_max
+  if (bMin && bMax) parts.push(`${bMin.toLocaleString()}–${bMax.toLocaleString()}€`)
+  else if (bMax) parts.push(`до ${bMax.toLocaleString()}€`)
+  else if (chat.budget) parts.push(`~${chat.budget.toLocaleString()}€`)
+
+  if (chat.mileage_min) parts.push(`пробіг від ${(chat.mileage_min / 1000).toFixed(0)}k км`)
+  if (chat.mileage_max) parts.push(`пробіг до ${(chat.mileage_max / 1000).toFixed(0)}k км`)
+  if (chat.color) parts.push(chat.color)
+  if (chat.required_options.length > 0) parts.push(chat.required_options.join(", "))
+
+  return parts.join(" / ") || "без обмежень"
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MAIN HANDLER
+// ═══════════════════════════════════════════════════════════════════════════════
+
 export async function POST(req: Request) {
-  const { messages, answers, cars, triggerSearch, clientOrderId, loadMore, chatPreferences } = await req.json()
+  const {
+    messages,
+    answers,
+    cars,
+    triggerSearch,
+    clientOrderId,
+    loadMore,
+    chatPreferences,
+  } = await req.json()
 
   const tags: string[] = []
   answers?.forEach((a: Answer) => {
@@ -296,119 +497,162 @@ export async function POST(req: Request) {
     if (a.custom?.trim()) tags.push(a.custom.trim())
   })
 
-  // ── Завантажити ще ────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  TRIGGER SEARCH — parse websites
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  if (triggerSearch) {
+    const orderId = clientOrderId ?? crypto.randomUUID()
+    const base = extractSearchParams(answers ?? [])
+
+    // Extract from chat WITH previous preferences (cumulative)
+    const prevPrefs: ChatPreferences | null = chatPreferences ?? null
+    const chat = await extractFromChat(messages ?? [], prevPrefs)
+
+    // Merge survey answers as fallback
+    if (!chat.budget && base.budget_max) chat.budget = base.budget_max
+    if (!chat.budget_min && base.budget_min) chat.budget_min = base.budget_min
+    if (!chat.budget_max && base.budget_max) chat.budget_max = base.budget_max
+    if (!chat.fuel && base.fuel) chat.fuel = base.fuel
+    if (!chat.body_type && base.body_type) chat.body_type = base.body_type
+    if (!chat.year_from && base.year_from) chat.year_from = base.year_from
+    if (!chat.transmission && base.transmission) chat.transmission = base.transmission
+
+    console.log("[ai-picker] search params:", JSON.stringify(chat))
+
+    // Budget check
+    const effectiveBudget = chat.budget ?? chat.budget_max ?? base.budget_max
+    if (effectiveBudget != null && effectiveBudget < MIN_BUDGET) {
+      return NextResponse.json({
+        message: `Fresh Auto працює з авто від ${MIN_BUDGET.toLocaleString()} EUR. З меншим бюджетом складно забезпечити якість та гарантії. Якщо готові розглянути вищий діапазон — із задоволенням допоможу.`,
+        searching: false,
+        cars: [],
+        chatPreferences: chat,
+      })
+    }
+
+    const result = await triggerParser(answers ?? [], orderId, chat)
+    const count = result?.count ?? 0
+    const filterDesc = describeFilters(chat, base)
+
+    let message: string
+    if (count > 0) {
+      message = `Готово, ${count} ${count === 1 ? "варіант" : count < 5 ? "варіанти" : "варіантів"} за критеріями: ${filterDesc}. Перегляньте нижче. Якщо потрібно звузити вибір — скажіть що саме важливо.`
+    } else {
+      message = `За параметрами (${filterDesc}) зараз нічого не знайшов. Рекомендую розширити пошук — наприклад збільшити бюджет, прибрати обмеження по пробігу або розглянути суміжні моделі. Що скоригуємо?`
+    }
+
+    return NextResponse.json({
+      message,
+      searching: false,
+      cars: result?.cars ?? [],
+      chatPreferences: chat,
+    })
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  LOAD MORE
+  // ═══════════════════════════════════════════════════════════════════════════
+
   if (loadMore && chatPreferences) {
     const offset = chatPreferences.offset ?? 20
     const orderId = clientOrderId ?? crypto.randomUUID()
-    const result = await triggerParser(answers, orderId, chatPreferences, offset)
+    const result = await triggerParser(answers ?? [], orderId, chatPreferences)
     const count = result?.count ?? 0
     return NextResponse.json({
       message: count > 0
-        ? `Знайдено ще ${count} авто!`
-        : "Більше авто за цими критеріями не знайдено.",
+        ? `Ще ${count} варіантів.`
+        : "Всі доступні варіанти вже показані.",
       searching: false,
       cars: result?.cars ?? [],
       chatPreferences: { ...chatPreferences, offset: offset + 20 },
     })
   }
 
-  // ── Запуск парсера ────────────────────────────────────────────────────────
-  if (triggerSearch) {
-    const orderId = clientOrderId ?? crypto.randomUUID()
-    const chat = await extractFromChat(messages ?? [])
-    const base = extractSearchParams(answers)
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  REGULAR CHAT — decide: SEARCH or REPLY
+  // ═══════════════════════════════════════════════════════════════════════════
 
-    // Fallback з анкети
-    if (!chat.budget && base.budget_max) chat.budget = base.budget_max
-    if (!chat.fuel && base.fuel) chat.fuel = base.fuel
-    if (!chat.body_type && base.body_type) chat.body_type = base.body_type
-    if (!chat.year_from && base.year_from) chat.year_from = base.year_from
-
-    console.log("[ai-picker] extracted:", JSON.stringify(chat))
-
-    const effectiveBudget = chat.budget ?? base.budget_max
-    if (effectiveBudget != null && effectiveBudget < MIN_BUDGET) {
-      return NextResponse.json({
-        message: `Fresh Auto спеціалізується на авто від ${MIN_BUDGET.toLocaleString()} EUR. На жаль, у цьому діапазоні ми не зможемо запропонувати гідні варіанти. Якщо розглядаєте вищий бюджет — будемо раді допомогти. Телефон: 098 708 19 19.`,
-        searching: false,
-        cars: [],
-      })
-    }
-
-    const result = await triggerParser(answers, orderId, chat)
-    const count = result?.count ?? 0
-    const budgetLabel = chat.budget
-      ? `${Math.round(chat.budget * 0.95).toLocaleString()}–${Math.round(chat.budget * 1.05).toLocaleString()}€`
-      : (base.budget_min && base.budget_max) ? `${base.budget_min}–${base.budget_max}€`
-      : base.budget_max ? `до ${base.budget_max}€` : "—"
-    const makesLabel = chat.pairs.map(p => [p.make, p.model].filter(Boolean).join(" ")).join(", ") || "—"
-
-    return NextResponse.json({
-      message: count > 0
-        ? `Знайдено ${count} авто під ваші критерії! Перегляньте результати нижче.`
-        : `На жаль, за критеріями (${makesLabel}, бюджет ${budgetLabel}) нічого не знайдено. Спробуйте розширити критерії або зверніться до менеджера: 098 708 19 19.`,
-      searching: false,
-      cars: result?.cars ?? [],
-      chatPreferences: { ...chat, offset: 20 },
-    })
-  }
-
-  // ── Звичайна розмова ──────────────────────────────────────────────────────
   const hasNoCars = !cars || cars.length === 0
-  const carsContext = cars?.slice(0, 6)
-    .map((c: any, i: number) =>
-      `${i + 1}. ${c.year ?? "—"} ${c.make} ${c.model} — €${c.price?.toLocaleString()}, ${c.mileage ? Math.round(c.mileage / 1000) + "k km" : "—"}, ${c.fuel_ua || c.fuel || "—"}, ${c.body_type_ua || c.body_type || "—"}, ${c.color_ua || c.color || "—"}`)
+  const carsContext = cars
+    ?.slice(0, 6)
+    .map(
+      (c: any, i: number) =>
+        `${i + 1}. ${c.year ?? "?"} ${c.make} ${c.model} — €${c.price?.toLocaleString() ?? "?"}, ${c.mileage ? Math.round(c.mileage / 1000) + "k км" : "пробіг ?"}, ${c.fuel_ua || c.fuel || "?"}, ${c.body_type_ua || c.body_type || "?"}, ${c.color_ua || c.color || "?"}`,
+    )
     .join("\n") ?? ""
 
-  const systemPrompt = `Ти AI-консультант Fresh Auto — продаж авто з Європи до України. Відповідаєш українською, коротко. БЕЗ емодзі, БЕЗ зірочок, БЕЗ markdown.
+  const prefsContext = chatPreferences
+    ? `\nПоточні параметри пошуку: ${JSON.stringify(chatPreferences)}`
+    : ""
 
-Критерії з анкети: ${tags.join(", ") || "не вказані"}
+  const systemPrompt = `Ти — Олексій, досвідчений консультант Fresh Auto з 8-річним стажем підбору та імпорту авто з Європи. Спілкуєшся українською, дружньо але професійно. Не використовуєш емодзі, зірочки, markdown-розмітку.
+
+Критерії клієнта з анкети: ${tags.join(", ") || "не заповнені"}
+${prefsContext}
 
 ${hasNoCars
-  ? "У каталозі Fresh Auto зараз немає авто за цими критеріями."
-  : `Авто в каталозі Fresh Auto:\n${carsContext}`}
+    ? "Зараз в каталозі Fresh Auto немає авто за цими критеріями."
+    : `В каталозі Fresh Auto:\n${carsContext}`}
 
-═══ ПРАВИЛА ═══
+═══ ГОЛОВНЕ ПРАВИЛО ═══
 
-ОДРАЗУ відповідай ТІЛЬКИ словом TRIGGER_SEARCH якщо:
-• Клієнт назвав марку або модель
-• Клієнт просить пошук, більше варіантів, альтернативи
-• Клієнт відповів на твоє питання новими параметрами
-• Клієнт каже: "давай", "так", "добре", "шукай", "знайди", "більше", "є ще"
-• В каталозі немає авто і клієнт хоче шукати
-• Ти вже ставив питання раніше в цій розмові
+Відповідай ТІЛЬКИ словом TRIGGER_SEARCH якщо виконується БУДЬ-ЩО з цього:
+- Клієнт назвав марку, модель, або будь-який параметр авто
+- Клієнт просить шукати, знайти, показати, подивитись варіанти
+- Клієнт уточнює або змінює параметри (пробіг, колір, опції, бюджет)
+- Клієнт каже "так", "давай", "добре", "шукай", "знайди", "ще", "більше"
+- В каталозі немає авто
+- Ти вже задавав питання раніше
 
-Питай ТІЛЬКИ якщо клієнт написав першу фразу абсолютно без параметрів (наприклад тільки "привіт"). Максимум 1 питання.
+Одне виключення — якщо клієнт вперше написав щось без жодних параметрів (тільки "привіт"), задай ОДНЕ коротке питання: "Яка марка чи тип авто вас цікавить? Або назвіть бюджет — підберу варіанти."
 
-НЕ запускай якщо бюджет < 20 000 EUR.
-НЕ пропонуй "зателефонувати" замість пошуку.
-НЕ затягуй діалог зайвими уточненнями.
+═══ СТИЛЬ СПІЛКУВАННЯ ═══
 
-═══ БЮДЖЕТ < 20k ═══
-"Fresh Auto спеціалізується на авто від 20 000 EUR. Якщо розглядаєте вищий бюджет — будемо раді допомогти."
+Ти НЕ бот. Ти людина яка розуміється на авто. Приклади:
+- "Хороший вибір, Octavia — одна з найпрактичніших в цьому сегменті."
+- "Знайшов 12 варіантів. Якщо хочете звузити — скажіть що важливо: пробіг, колір, комплектація?"
+- "Зараз гляну що є в цьому діапазоні."
+- "Розумію, подивимось з пробігом від 150 тисяч."
 
-═══ ЗАГАЛЬНЕ ═══
-Ціна під ключ = авто + мито 10% + акциз 5% + ПДВ 20% + доставка ~2500 EUR.
-Менеджер: 098 708 19 19.`
+НЕ кажи "я не маю доступу", "зверніться до менеджера" замість пошуку.
+НЕ пропонуй зателефонувати ЗАМІСТЬ пошуку.
+НЕ затягуй діалог зайвими питаннями.
 
-  const triggerCheck = await callClaude(systemPrompt, messages as ChatMessage[], 10)
+Менеджер (098 708 19 19) — тільки для оформлення замовлення, не для пошуку.
+Ціна під ключ: авто + мито 10% + акциз 5% + ПДВ 20% + доставка ~2500 EUR.
+Мінімальний бюджет: 20 000 EUR.`
 
-  // Fallback — ключові слова пошуку
+  const triggerCheck = await callClaude(systemPrompt, messages as ChatMessage[], 15)
+
+  // Keyword fallback
   const lastUserMsg = (messages as ChatMessage[])
-    .filter(m => m.role === "user").slice(-1)[0]?.content?.toLowerCase() ?? ""
-  const searchKeywords = ["знайди", "пошукай", "шукай", "більше", "ще авто", "інші варіанти", "давай", "так шукай"]
+    .filter(m => m.role === "user")
+    .slice(-1)[0]
+    ?.content?.toLowerCase() ?? ""
+  const searchKeywords = [
+    "знайди", "пошукай", "шукай", "більше", "ще авто", "інші варіанти",
+    "давай", "так шукай", "покажи", "глянь", "подивись", "пробіг",
+    "від ", "до ", "колір", "шкіра", "панорама", "камера",
+  ]
   const isDirectSearch = searchKeywords.some(k => lastUserMsg.includes(k))
 
   if (triggerCheck.includes("TRIGGER_SEARCH") || isDirectSearch) {
-    const orderId = crypto.randomUUID()
     return NextResponse.json({
-      message: "Запускаю пошук на AutoScout24 та Mobile.de за вашими критеріями. Зазвичай займає 30-60 секунд.",
+      message: "Зараз гляну що є за вашими критеріями.",
       searching: true,
-      clientOrderId: orderId,
+      clientOrderId: clientOrderId ?? crypto.randomUUID(),
+      chatPreferences: chatPreferences ?? null,
     })
   }
 
-  const safePrompt = systemPrompt + "\n\nВАЖЛИВО: НЕ використовуй TRIGGER_SEARCH у відповіді. Дай корисну відповідь."
-  const reply = await callClaude(safePrompt, messages as ChatMessage[], 400)
-  return NextResponse.json({ message: reply || "Вибачте, спробуйте ще раз." })
+  // Regular conversation
+  const safePrompt =
+    systemPrompt +
+    "\n\nВАЖЛИВО: Зараз НЕ потрібен пошук. Не пиши TRIGGER_SEARCH. Дай корисну відповідь як консультант."
+  const reply = await callClaude(safePrompt, messages as ChatMessage[], 500)
+  return NextResponse.json({
+    message: reply || "Перепрошую, спробуйте сформулювати інакше.",
+    chatPreferences: chatPreferences ?? null,
+  })
 }

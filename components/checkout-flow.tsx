@@ -92,7 +92,7 @@ export default function CheckoutFlow({ car, onClose }: CheckoutFlowProps) {
             </p>
             <div className="flex items-center gap-4 rounded-xl border border-white/[0.06] bg-[#0A0A0A] p-4 w-full max-w-sm">
               <div className="h-14 w-20 flex-shrink-0 overflow-hidden rounded-lg">
-                <img src={car.image} alt={`${car.make} ${car.model}`} crossOrigin="anonymous" className="h-full w-full object-cover" />
+                {car.image && <img src={car.image} alt={`${car.make} ${car.model}`} crossOrigin="anonymous" className="h-full w-full object-cover" />}
               </div>
               <div className="flex-1 min-w-0 text-left">
                 <div className="text-sm font-medium text-foreground truncate">{car.make} {car.model}</div>
@@ -122,7 +122,7 @@ export default function CheckoutFlow({ car, onClose }: CheckoutFlowProps) {
         {/* Car summary */}
         <div className="mb-6 flex items-center gap-4 rounded-xl border border-white/[0.06] bg-[#0A0A0A] p-3">
           <div className="h-12 w-18 flex-shrink-0 overflow-hidden rounded-lg">
-            <img src={car.image} alt={`${car.make} ${car.model}`} crossOrigin="anonymous" className="h-full w-full object-cover" />
+            {car.image && <img src={car.image} alt={`${car.make} ${car.model}`} crossOrigin="anonymous" className="h-full w-full object-cover" />}
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-foreground truncate">{car.year} {car.make} {car.model}</div>

@@ -396,7 +396,7 @@ export default function AdminDashboard() {
                     <div key={car.id} className="flex items-center gap-4 px-5 py-3 hover:bg-secondary/30 transition-colors">
                       <span className="text-[11px] text-muted-foreground/50 w-4 tabular-nums">{i + 1}</span>
                       <div className="h-10 w-14 flex-shrink-0 overflow-hidden rounded-lg">
-                        <img src={car.image} alt={car.model} crossOrigin="anonymous" className="h-full w-full object-cover" />
+                        {car.image && <img src={car.image} alt={car.model} crossOrigin="anonymous" className="h-full w-full object-cover" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-xs font-medium text-foreground truncate">{car.make} {car.model}</div>
