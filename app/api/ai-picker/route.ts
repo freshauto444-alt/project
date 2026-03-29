@@ -32,6 +32,7 @@ interface ChatPreferences {
   mileage_min: number | null
   required_options: string[]
   year_from: number | null
+  year_to: number | null
   transmission: string | null
   offset?: number
 }
@@ -111,8 +112,10 @@ function extractSearchParams(answers: Answer[]) {
     const plain = parseInt(budgetStr.replace(/\D/g, ""))
     if (!isNaN(plain) && plain > 0) budgetMax = plain
   }
-  const yearStr = byId.year?.selected[0] ?? byId.year?.custom ?? ""
-  const yearFrom = yearStr ? parseInt(yearStr) : null
+  const yearFromStr = byId.year?.selected[0] ?? byId.year?.custom ?? ""
+  const yearToStr = byId.year?.selected[1] ?? ""
+  const yearFrom = yearFromStr ? parseInt(yearFromStr) : null
+  const yearTo = yearToStr ? parseInt(yearToStr) : null
 
   const fuelMap: Record<string, string> = {
     "Бензин": "Petrol", "Дизель": "Diesel",
@@ -130,6 +133,7 @@ function extractSearchParams(answers: Answer[]) {
 
   return {
     year_from: yearFrom && !isNaN(yearFrom) ? yearFrom : null,
+    year_to: yearTo && !isNaN(yearTo) ? yearTo : null,
     budget_min: budgetMin,
     budget_max: budgetMax,
     fuel: fuelMap[byId.fuel?.selected[0] ?? ""] ?? null,
@@ -177,7 +181,7 @@ async function extractFromChat(
     pairs: [], fuel: null, body_type: null, budget: null,
     budget_min: null, budget_max: null,
     color: null, mileage_max: null, mileage_min: null,
-    required_options: [], year_from: null, transmission: null,
+    required_options: [], year_from: null, year_to: null, transmission: null,
   }
 
   try {
@@ -286,6 +290,9 @@ ${prevContext}
       year_from: "year_from" in parsed
         ? (typeof parsed.year_from === "number" ? parsed.year_from : null)
         : prev.year_from,
+      year_to: "year_to" in parsed
+        ? (typeof parsed.year_to === "number" ? parsed.year_to : null)
+        : prev.year_to,
       transmission: mergeField("transmission", prev.transmission),
     }
   } catch (e) {
@@ -338,6 +345,7 @@ async function triggerParser(
 
   const commonPayload: Record<string, unknown> = {
     year_from: chat.year_from ?? base.year_from,
+    year_to: chat.year_to ?? base.year_to,
     budget_min: budgetMin,
     budget_max: budgetMax,
     fuel: chat.fuel ?? base.fuel,

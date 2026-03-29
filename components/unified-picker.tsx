@@ -68,10 +68,10 @@ const QUESTIONS: Question[] = [
   {
     id: "year",
     icon: Calendar,
-    title: "Від якого року випуску?",
-    subtitle: "Оберіть мінімальний рік або напишіть свій",
+    title: "Рік випуску",
+    subtitle: "Оберіть діапазон — від та до",
     multi: false,
-    options: ["2018", "2019", "2020", "2021", "2022", "2023", "2024"],
+    options: [],
   },
   {
     id: "transmission",
@@ -115,8 +115,14 @@ const EMPTY_ANSWERS: Answer[] = QUESTIONS.map(q => ({
 function buildTags(answers: Answer[]): string[] {
   const tags: string[] = []
   answers.forEach(a => {
-    a.selected.forEach(s => tags.push(s))
-    if (a.custom.trim()) tags.push(a.custom.trim())
+    if (a.questionId === "year") {
+      const from = a.selected[0] ?? ""
+      const to = a.selected[1] ?? ""
+      if (from || to) tags.push(from && to ? `${from} – ${to}` : from || to)
+    } else {
+      a.selected.forEach(s => tags.push(s))
+      if (a.custom.trim()) tags.push(a.custom.trim())
+    }
   })
   return tags
 }
@@ -147,7 +153,13 @@ const YEAR_ITEM_H = 44
 const CURRENT_YEAR = new Date().getFullYear()
 const YEARS = Array.from({ length: CURRENT_YEAR - 1990 + 1 }, (_, i) => String(CURRENT_YEAR - i))
 
-function YearScrollPicker({ selected, onSelect }: { selected: string; onSelect: (y: string) => void }) {
+function YearScrollPicker({
+  selected, onSelect, defaultYear,
+}: {
+  selected: string
+  onSelect: (y: string) => void
+  defaultYear?: string
+}) {
   const containerRef = useRef<HTMLDivElement>(null)
   // Only commit selection after the user actually interacts with the picker.
   // Scroll-snap can fire spurious scroll events on mount — ignore those.
@@ -156,7 +168,8 @@ function YearScrollPicker({ selected, onSelect }: { selected: string; onSelect: 
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const idx = selected ? YEARS.indexOf(selected) : 0
+    const target = selected || defaultYear || ""
+    const idx = target ? YEARS.indexOf(target) : 0
     if (idx >= 0) el.scrollTop = idx * YEAR_ITEM_H
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -292,12 +305,25 @@ function QuestionStep({
         </div>
       </div>
 
-      {/* Options or Year Scroll Picker */}
+      {/* Options or Year Range Picker */}
       {question.id === "year" ? (
-        <YearScrollPicker
-          selected={answer.selected[0] ?? ""}
-          onSelect={y => onChange({ ...answer, selected: [y], custom: "" })}
-        />
+        <div className="flex gap-3">
+          <div className="flex flex-1 flex-col gap-2">
+            <p className="text-center text-xs font-medium text-white/35">Від</p>
+            <YearScrollPicker
+              selected={answer.selected[0] ?? ""}
+              defaultYear="2020"
+              onSelect={y => onChange({ ...answer, selected: [y, answer.selected[1] ?? ""] })}
+            />
+          </div>
+          <div className="flex flex-1 flex-col gap-2">
+            <p className="text-center text-xs font-medium text-white/35">До</p>
+            <YearScrollPicker
+              selected={answer.selected[1] ?? ""}
+              onSelect={y => onChange({ ...answer, selected: [answer.selected[0] ?? "", y] })}
+            />
+          </div>
+        </div>
       ) : (
         <>
           <div className="flex flex-wrap gap-2">
