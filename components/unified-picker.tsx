@@ -170,7 +170,11 @@ function YearScrollPicker({
     if (!el) return
     const target = selected || defaultYear || ""
     const idx = target ? YEARS.indexOf(target) : 0
-    if (idx >= 0) el.scrollTop = idx * YEAR_ITEM_H
+    if (idx >= 0) {
+      el.scrollTop = idx * YEAR_ITEM_H
+      // Commit the initial/default value so the tag appears even without scrolling
+      if (!selected && target) onSelect(target)
+    }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleScroll = () => {
