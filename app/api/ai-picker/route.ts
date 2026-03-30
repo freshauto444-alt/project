@@ -34,6 +34,8 @@ interface ChatPreferences {
   year_from: number | null
   year_to: number | null
   transmission: string | null
+  displacement_min: number | null
+  displacement_max: number | null
   offset?: number
 }
 
@@ -182,6 +184,7 @@ async function extractFromChat(
     budget_min: null, budget_max: null,
     color: null, mileage_max: null, mileage_min: null,
     required_options: [], year_from: null, year_to: null, transmission: null,
+    displacement_min: null, displacement_max: null,
   }
 
   try {
@@ -200,29 +203,37 @@ async function extractFromChat(
       : ""
 
     const text = await callClaude(
-      `Ти витягуєш параметри пошуку авто з ОСТАННЬОГО повідомлення клієнта, враховуючи контекст розмови.
-Клієнт пише українською/російською/англійською.
+      `Ти витягуєш параметри пошуку авто з повідомлень клієнта. Клієнт пише українською/російською/англійською.
 ${prevContext}
 
-КРИТИЧНІ ПРАВИЛА:
-1. Якщо клієнт ДОДАЄ параметр — зберігай попередні, додай новий
+КРИТИЧНІ ПРАВИЛА (ДОТРИМУЙСЯ СТРОГО):
+1. Якщо клієнт ДОДАЄ параметр — зберігай усі попередні, додай новий
 2. Якщо клієнт ЗМІНЮЄ параметр — заміни тільки його
-3. Якщо клієнт СКАСОВУЄ параметр ("без пробігу", "без урахування пробігу", "будь-який пробіг", "неважливо") → постав ЯВНО null
-4. "пробіг більше 150к" / "від 150 тис км" → mileage_min: 150000, mileage_max: null
-5. "пробіг до 100к" → mileage_max: 100000, mileage_min: null
-6. "від 100 000" (в контексті пробігу) → mileage_min: 100000
-7. "без пробігу" / "будь-який пробіг" / "без урахування пробігу" → mileage_min: null, mileage_max: null
+3. Якщо клієнт СКАСОВУЄ параметр ("будь-який пробіг", "неважливо", "без обмежень") → постав ЯВНО null
+4. ЗАВЖДИ зберігай fuel якщо він вже є в попередніх параметрах, навіть якщо клієнт не згадує його знову
+5. ЗАВЖДИ зберігай марку/модель якщо вони вже є в попередніх параметрах
+
+ПРОБІГ:
+- "пробіг більше 150к" / "від 150 тис км" → mileage_min: 150000, mileage_max: null
+- "пробіг до 100к" → mileage_max: 100000, mileage_min: null
+- "будь-який пробіг" / "без урахування пробігу" → mileage_min: null, mileage_max: null
+
+ОБ'ЄМ ДВИГУНА:
+- "від 2-х літрів" / "двигун від 2л" / "2.0 і вище" → displacement_min: 2.0, displacement_max: null
+- "до 1.6л" / "не більше 1.6" → displacement_min: null, displacement_max: 1.6
+- "2.0 TDI" / "2.0 дизель" → displacement_min: 2.0, displacement_max: 2.0
+- "1.5-2.0л" → displacement_min: 1.5, displacement_max: 2.0
 
 МАРКИ ТА МОДЕЛІ:
-- "бмв 5 серії" / "bmw 5" / "п'ятірка бмв" → make: "BMW", model: "5 Series"
-- "бмв 3" / "трійка бмв" → make: "BMW", model: "3 Series"  
-- "бмв х5" / "ікс п'ять" → make: "BMW", model: "X5"
+- "бмв 5 серії" / "п'ятірка бмв" → make: "BMW", model: "5 Series"
+- "бмв 3" / "трійка бмв" → make: "BMW", model: "3 Series"
+- "бмв х5" → make: "BMW", model: "X5"
 - "ауді а4" → make: "Audi", model: "A4"
 - "пасат" → make: "Volkswagen", model: "Passat"
 - "октавія" / "октавия" → make: "Skoda", model: "Octavia"
 - "мазда 6" → make: "Mazda", model: "6"
 
-Поверни JSON (ОБОВ'ЯЗКОВО усі поля, null якщо не задано або скасовано):
+Поверни JSON (ОБОВ'ЯЗКОВО усі поля, null якщо не задано):
 {
   "pairs": [{"make": "...", "model": "..."}],
   "budget": число EUR або null,
@@ -230,15 +241,18 @@ ${prevContext}
   "body_type": "Sedan"|"Estate"|"SUV"|"Hatchback"|"Coupe"|"Convertible"|"Van" або null,
   "transmission": "Automatic"|"Manual" або null,
   "color": "Black"|"White"|"Grey"|"Blue"|"Red" тощо або null,
-  "mileage_max": число км або null (ЯВНО null якщо скасовано),
-  "mileage_min": число км або null (ЯВНО null якщо скасовано),
+  "mileage_max": число км або null,
+  "mileage_min": число км або null,
   "required_options": ["leather","panorama","carplay","navigation","camera","heated seats"] або [],
-  "year_from": число або null
+  "year_from": число або null,
+  "year_to": число або null,
+  "displacement_min": число (літри, напр. 2.0) або null,
+  "displacement_max": число (літри, напр. 2.0) або null
 }
 
 Поверни ТІЛЬКИ JSON.`,
       [{ role: "user", content: userText }],
-      300,
+      350,
     )
 
     const match = text.match(/\{[\s\S]*\}/)
@@ -294,6 +308,12 @@ ${prevContext}
         ? (typeof parsed.year_to === "number" ? parsed.year_to : null)
         : prev.year_to,
       transmission: mergeField("transmission", prev.transmission),
+      displacement_min: "displacement_min" in parsed
+        ? (typeof parsed.displacement_min === "number" ? parsed.displacement_min : null)
+        : prev.displacement_min,
+      displacement_max: "displacement_max" in parsed
+        ? (typeof parsed.displacement_max === "number" ? parsed.displacement_max : null)
+        : prev.displacement_max,
     }
   } catch (e) {
     console.error("[extractFromChat]", e)
@@ -351,6 +371,8 @@ async function triggerParser(
     fuel: chat.fuel ?? base.fuel,
     transmission: chat.transmission ?? base.transmission,
     body_type: chat.body_type ?? base.body_type,
+    displacement_min: chat.displacement_min ?? null,
+    displacement_max: chat.displacement_max ?? null,
     client_order_id: clientOrderId,
   }
 
@@ -417,6 +439,29 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
         })
       })
     }
+  }
+
+  // Fuel — hard filter, never show petrol when diesel requested
+  if (prefs.fuel) {
+    filtered = filtered.filter(c => {
+      const carFuel = (c.fuel ?? c.fuel_ua ?? "").toLowerCase()
+      if (!carFuel || carFuel === "unknown") return true
+      return carFuel.includes(prefs.fuel!.toLowerCase())
+    })
+  }
+
+  // Engine displacement
+  if (prefs.displacement_min != null || prefs.displacement_max != null) {
+    filtered = filtered.filter(c => {
+      const eng: string = (c.engine ?? "").toLowerCase()
+      // Extract displacement number from engine string e.g. "2.0 Diesel" → 2.0
+      const m = eng.match(/\b([1-9]\.\d)\b/)
+      if (!m) return true // keep if unknown
+      const liters = parseFloat(m[1])
+      if (prefs.displacement_min != null && liters < prefs.displacement_min) return false
+      if (prefs.displacement_max != null && liters > prefs.displacement_max) return false
+      return true
+    })
   }
 
   // Mileage max
@@ -486,6 +531,12 @@ function describeFilters(chat: ChatPreferences, base: ReturnType<typeof extractS
 
   if (chat.mileage_min) parts.push(`пробіг від ${(chat.mileage_min / 1000).toFixed(0)}k км`)
   if (chat.mileage_max) parts.push(`пробіг до ${(chat.mileage_max / 1000).toFixed(0)}k км`)
+  if (chat.displacement_min != null && chat.displacement_max != null && chat.displacement_min === chat.displacement_max)
+    parts.push(`${chat.displacement_min}л`)
+  else if (chat.displacement_min != null && chat.displacement_max != null)
+    parts.push(`${chat.displacement_min}–${chat.displacement_max}л`)
+  else if (chat.displacement_min != null) parts.push(`від ${chat.displacement_min}л`)
+  else if (chat.displacement_max != null) parts.push(`до ${chat.displacement_max}л`)
   if (chat.color) parts.push(chat.color)
   if (chat.required_options.length > 0) parts.push(chat.required_options.join(", "))
 
@@ -611,31 +662,49 @@ ${hasNoCars
     ? "Зараз в каталозі Fresh Auto немає авто за цими критеріями."
     : `В каталозі Fresh Auto:\n${carsContext}`}
 
-═══ ГОЛОВНЕ ПРАВИЛО ═══
+═══ ПРАВИЛА ПОШУКУ ═══
 
-Відповідай ТІЛЬКИ словом TRIGGER_SEARCH якщо виконується БУДЬ-ЩО з цього:
-- Клієнт назвав марку, модель, або будь-який параметр авто
-- Клієнт просить шукати, знайти, показати, подивитись варіанти
-- Клієнт уточнює або змінює параметри (пробіг, колір, опції, бюджет)
-- Клієнт каже "так", "давай", "добре", "шукай", "знайди", "ще", "більше"
-- В каталозі немає авто
-- Ти вже задавав питання раніше
+Відповідай ТІЛЬКИ словом TRIGGER_SEARCH (без іншого тексту) якщо:
+- Клієнт назвав або уточнив конкретний параметр авто (марку, модель, паливо, бюджет, рік, пробіг, кузов, об'єм двигуна)
+- Клієнт явно просить шукати / знайти / показати
+- Клієнт уточнює або змінює вже задані параметри
+- В каталозі є авто але клієнт просить звузити вибір
 
-Одне виключення — якщо клієнт вперше написав щось без жодних параметрів (тільки "привіт"), задай ОДНЕ коротке питання: "Яка марка чи тип авто вас цікавить? Або назвіть бюджет — підберу варіанти."
+НЕ відповідай TRIGGER_SEARCH якщо:
+- Клієнт написав лише "так" / "давай" / "добре" без конкретного параметру — в такому випадку задай уточнюючий питання
+- Клієнт ставить питання або просить пояснення
+- Клієнт вперше написав без жодних параметрів
 
-═══ СТИЛЬ СПІЛКУВАННЯ ═══
+═══ СТРАТЕГІЯ УТОЧНЕНЬ ═══
 
-Ти НЕ бот. Ти людина яка розуміється на авто. Приклади:
-- "Хороший вибір, Octavia — одна з найпрактичніших в цьому сегменті."
-- "Знайшов 12 варіантів. Якщо хочете звузити — скажіть що важливо: пробіг, колір, комплектація?"
-- "Зараз гляну що є в цьому діапазоні."
-- "Розумію, подивимось з пробігом від 150 тисяч."
+Якщо у клієнта бракує ключових параметрів — задавай ОДНЕ конкретне питання (не декілька одразу).
+Пріоритет уточнень (питай в такому порядку якщо не задано):
+1. Марка/модель (якщо не вказано)
+2. Бюджет (якщо не вказано)
+3. Тип палива — бензин, дизель, електро (якщо не вказано)
+4. Рік — від якого (якщо не вказано)
+5. Пробіг — максимальний (якщо не вказано і є авто з великим пробігом)
+
+Приклади уточнень:
+- "Є конкретна модель чи розглядаєте будь-який кросовер?"
+- "Який бюджет орієнтовно?"
+- "Бензин чи дизель — є перевага?"
+- "Пробіг важливий? Є варіанти від 50k до 200k км."
+
+═══ СТИЛЬ ═══
+
+Ти НЕ бот. Думаєш як автоексперт, не як довідник. Приклади:
+- "Octavia на дизелі — правильний вибір, практична і надійна. З якого року дивимось?"
+- "Знайшов 20 варіантів. Більшість 1.6 TDI — якщо потрібен об'єм від 2.0, скажіть."
+- "Розумію. Покажу тільки 2.0 TDI і вище."
+- "З пробігом до 100k буде менше варіантів, але вибірка якісніша."
+
+Після пошуку — коротко прокоментуй результат і запропонуй одне конкретне уточнення.
 
 НЕ кажи "я не маю доступу", "зверніться до менеджера" замість пошуку.
-НЕ пропонуй зателефонувати ЗАМІСТЬ пошуку.
-НЕ затягуй діалог зайвими питаннями.
+НЕ пропонуй зателефонувати ЗАМІСТЬ пошуку — тільки для оформлення.
 
-Менеджер (098 708 19 19) — тільки для оформлення замовлення, не для пошуку.
+Менеджер (098 708 19 19) — тільки для оформлення замовлення.
 Ціна під ключ: авто + мито 10% + акциз 5% + ПДВ 20% + доставка ~2500 EUR.
 Мінімальний бюджет: 20 000 EUR.`
 

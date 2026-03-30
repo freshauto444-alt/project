@@ -9,6 +9,33 @@ import {
 } from "lucide-react"
 import type { Car as CarType } from "@/lib/data"
 
+// ─── API → CarType mapper ──────────────────────────────────────────────────────
+// The parser API returns snake_case keys; CarType uses camelCase.
+function mapApiCar(raw: any): CarType {
+  return {
+    ...raw,
+    colorUa: raw.colorUa ?? raw.color_ua,
+    fuelUa: raw.fuelUa ?? raw.fuel_ua,
+    bodyType: raw.bodyType ?? raw.body_type,
+    bodyTypeUa: raw.bodyTypeUa ?? raw.body_type_ua,
+    statusUa: raw.statusUa ?? raw.status_ua,
+    featuresUa: raw.featuresUa ?? raw.features_ua ?? [],
+    safetyFeatures: raw.safetyFeatures ?? raw.safety_features ?? [],
+    comfortFeatures: raw.comfortFeatures ?? raw.comfort_features ?? [],
+    infotainment: raw.infotainment ?? [],
+    seatMaterial: raw.seatMaterial ?? raw.seat_material,
+    seatMaterialUa: raw.seatMaterialUa ?? raw.seat_material_ua,
+    countryUa: raw.countryUa ?? raw.country_ua,
+    plateType: raw.plateType ?? raw.plate_type,
+    sourceType: raw.sourceType ?? raw.source_type,
+    sourceUrl: raw.sourceUrl ?? raw.source_url,
+    sourceSite: raw.sourceSite ?? raw.source_site,
+    features: raw.features ?? [],
+    gallery: raw.gallery ?? [],
+    history: raw.history ?? [],
+  }
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Answer {
@@ -547,7 +574,7 @@ function AIChat({
       const data = await res.json()
       setMessages(m => [...m, { role: "assistant", content: data.message }])
       if (data.chatPreferences) setChatPreferences(data.chatPreferences)
-      onNewCars(data.cars ?? [])
+      onNewCars((data.cars ?? []).map(mapApiCar))
     } catch {
       setMessages(m => [
         ...m,
@@ -847,7 +874,7 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
         body: JSON.stringify({ answers: finalAnswers }),
       })
       const data = await res.json()
-      setResults(data.cars ?? [])
+      setResults((data.cars ?? []).map(mapApiCar))
     } catch {
       setResults([])
     } finally {
