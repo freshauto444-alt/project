@@ -662,18 +662,11 @@ ${hasNoCars
     ? "Зараз в каталозі Fresh Auto немає авто за цими критеріями."
     : `В каталозі Fresh Auto:\n${carsContext}`}
 
-═══ ПРАВИЛА ПОШУКУ ═══
+═══ КОЛИ ВІДПОВІДАТИ TRIGGER_SEARCH ═══
 
-Відповідай ТІЛЬКИ словом TRIGGER_SEARCH (без іншого тексту) якщо:
-- Клієнт назвав або уточнив конкретний параметр авто (марку, модель, паливо, бюджет, рік, пробіг, кузов, об'єм двигуна)
-- Клієнт явно просить шукати / знайти / показати
-- Клієнт уточнює або змінює вже задані параметри
-- В каталозі є авто але клієнт просить звузити вибір
+Відповідай ТІЛЬКИ словом TRIGGER_SEARCH (без будь-якого іншого тексту) якщо клієнт уточнює або доповнює параметри пошуку, але марку/модель/тип вже не згадує (тобто це НЕ перше повідомлення з параметром). Наприклад: "лише з панорамою", "пробіг до 80к", "хочу чорний", "ціна до 25000".
 
-НЕ відповідай TRIGGER_SEARCH якщо:
-- Клієнт написав лише "так" / "давай" / "добре" без конкретного параметру — в такому випадку задай уточнюючий питання
-- Клієнт ставить питання або просить пояснення
-- Клієнт вперше написав без жодних параметрів
+В усіх інших випадках відповідай ТІЛЬКИ звичайним текстом — система автоматично запустить пошук за ключовими словами.
 
 ═══ СТРАТЕГІЯ УТОЧНЕНЬ ═══
 
@@ -708,21 +701,33 @@ ${hasNoCars
 Ціна під ключ: авто + мито 10% + акциз 5% + ПДВ 20% + доставка ~2500 EUR.
 Мінімальний бюджет: 20 000 EUR.`
 
-  const triggerCheck = await callClaude(systemPrompt, messages as ChatMessage[], 15)
-
-  // Keyword fallback
   const lastUserMsg = (messages as ChatMessage[])
     .filter(m => m.role === "user")
     .slice(-1)[0]
     ?.content?.toLowerCase() ?? ""
+
+  // Hard keyword fallback — bypass Claude entirely for obvious search intents
   const searchKeywords = [
     "знайди", "пошукай", "шукай", "більше", "ще авто", "інші варіанти",
     "давай", "так шукай", "покажи", "глянь", "подивись", "пробіг",
-    "від ", "до ", "колір", "шкіра", "панорама", "камера",
+    "колір", "шкіра", "панорама", "камера",
+    // car brands
+    "bmw", "audi", "mercedes", "volkswagen", "vw", "volvo", "skoda", "ford",
+    "toyota", "honda", "mazda", "hyundai", "kia", "opel", "renault", "peugeot",
+    "seat", "porsche", "tesla", "nissan", "subaru", "mitsubishi", "lexus",
+    "jeep", "jaguar", "land rover", "dacia", "fiat", "citroen", "mini",
+    // Ukrainian/Russian brand names
+    "пасат", "октавіа", "октавия", "гольф", "тигуан",
+    "бмв", "ауді", "ауди", "мерс", "мерседес", "вольво", "шкода", "тойота",
+    "хюндай", "хундай", "форд", "рено", "пежо", "опель", "нісан",
+    "вольцваген", "фольксваген", "фольк",
+    // fuel / type
+    "дизель", "бензин", "електро", "гібрид", "седан", "суv", "хетч", "позашляховик",
+    "універсал", "купе", "автомат", "механіка",
   ]
   const isDirectSearch = searchKeywords.some(k => lastUserMsg.includes(k))
 
-  if (triggerCheck.includes("TRIGGER_SEARCH") || isDirectSearch) {
+  if (isDirectSearch) {
     return NextResponse.json({
       message: "Зараз гляну що є за вашими критеріями.",
       searching: true,
@@ -731,13 +736,20 @@ ${hasNoCars
     })
   }
 
-  // Regular conversation
-  const safePrompt =
-    systemPrompt +
-    "\n\nВАЖЛИВО: Зараз НЕ потрібен пошук. Не пиши TRIGGER_SEARCH. Дай корисну відповідь як консультант."
-  const reply = await callClaude(safePrompt, messages as ChatMessage[], 500)
+  // Single Claude call — returns either TRIGGER_SEARCH or a conversational reply
+  const reply = await callClaude(systemPrompt, messages as ChatMessage[], 300)
+
+  if (!reply || reply.includes("TRIGGER_SEARCH")) {
+    return NextResponse.json({
+      message: "Зараз гляну що є за вашими критеріями.",
+      searching: true,
+      clientOrderId: clientOrderId ?? crypto.randomUUID(),
+      chatPreferences: chatPreferences ?? null,
+    })
+  }
+
   return NextResponse.json({
-    message: reply || "Перепрошую, спробуйте сформулювати інакше.",
+    message: reply,
     chatPreferences: chatPreferences ?? null,
   })
 }
