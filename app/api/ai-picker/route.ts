@@ -247,6 +247,64 @@ async function callClaude(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  Generate expert comment after search results
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function generateSearchComment(
+  foundCars: any[],
+  totalCount: number,
+  prefs: ChatPreferences | null,
+  tags: string[],
+): Promise<string> {
+  if (totalCount === 0) {
+    // No results — still generate via Claude for natural phrasing
+    const prompt = `Ти — досвідчений автоконсультант Fresh Auto. Клієнт шукав авто за параметрами: ${JSON.stringify(prefs)}, анкета: ${tags.join(", ") || "не заповнена"}.
+Результатів 0. Напиши коротку (2-3 речення) відповідь українською:
+- Скажи що за такими параметрами зараз немає авто
+- Запропонуй КОНКРЕТНО що змінити (один параметр) щоб з'явились варіанти
+Без емодзі, без markdown, без зірочок. Говори як живий консультант.`
+    return callClaude(prompt, [], 200)
+  }
+
+  const carsDesc = foundCars.slice(0, 6).map((c: any, i: number) => {
+    const parts = [
+      `${i + 1}. ${c.year ?? "?"} ${c.make} ${c.model}`,
+      `€${c.price?.toLocaleString() ?? "?"}`,
+      c.mileage ? `${Math.round(c.mileage / 1000)}k км` : null,
+      c.engine || null,
+      c.horsepower ? `${c.horsepower} к.с.` : null,
+      c.fuel_ua || c.fuel || null,
+      c.body_type_ua || c.body_type || null,
+      c.color_ua || c.color || null,
+      c.country_ua || c.country || null,
+    ]
+    return parts.filter(Boolean).join(", ")
+  }).join("\n")
+
+  const prompt = `Ти — досвідчений автоконсультант Fresh Auto. Клієнт шукав авто, знайдено ${totalCount} варіантів.
+Параметри: ${JSON.stringify(prefs)}
+Анкета: ${tags.join(", ") || "не заповнена"}
+
+Топ авто:
+${carsDesc}
+
+Напиши коротку відповідь (3-5 речень) українською:
+1. Скажи скільки знайдено (одним словом, не перелічуй критерії — клієнт їх і так знає)
+2. Виділи 1-2 найкращих варіанти і поясни ЧОМУ (ціна/якість, пробіг, надійність)
+3. Якщо є нюанси — попередь (дорогий сервіс, великий пробіг, рідкісні запчастини)
+4. Запропонуй одне уточнення або поради
+
+НЕ повторюй список критеріїв пошуку. НЕ кажи "перегляньте нижче". НЕ використовуй емодзі, markdown, зірочки, нумерацію. Говори як живий експерт одним абзацом.`
+
+  try {
+    const comment = await callClaude(prompt, [], 300)
+    return comment || `Знайшов ${totalCount} варіантів. Подивіться що підходить, і скажіть якщо потрібно уточнити.`
+  } catch {
+    return `Знайшов ${totalCount} варіантів. Подивіться що підходить, і скажіть якщо потрібно уточнити.`
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  Extract preferences from chat — CUMULATIVE
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -676,40 +734,6 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
 //  Build description of active filters
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function describeFilters(chat: ChatPreferences, base: ReturnType<typeof extractSearchParams>): string {
-  const parts: string[] = []
-  const makes = chat.pairs.map(p => [p.make, p.model].filter(Boolean).join(" ")).join(", ")
-  if (makes) parts.push(makes)
-  if (chat.fuel) parts.push(chat.fuel)
-  if (chat.body_type) parts.push(chat.body_type)
-  if (chat.transmission) parts.push(chat.transmission)
-  if (chat.year_from && chat.year_to) parts.push(`${chat.year_from}–${chat.year_to}`)
-  else if (chat.year_from) parts.push(`від ${chat.year_from}`)
-  else if (chat.year_to) parts.push(`до ${chat.year_to}`)
-
-  const bMin = chat.budget_min ?? base.budget_min
-  const bMax = chat.budget_max ?? base.budget_max
-  if (bMin && bMax) parts.push(`${bMin.toLocaleString()}–${bMax.toLocaleString()}€`)
-  else if (bMax) parts.push(`до ${bMax.toLocaleString()}€`)
-  else if (chat.budget) parts.push(`~${chat.budget.toLocaleString()}€`)
-
-  if (chat.mileage_min) parts.push(`пробіг від ${(chat.mileage_min / 1000).toFixed(0)}k км`)
-  if (chat.mileage_max) parts.push(`пробіг до ${(chat.mileage_max / 1000).toFixed(0)}k км`)
-  if (chat.displacement_min != null && chat.displacement_max != null && chat.displacement_min === chat.displacement_max)
-    parts.push(`${chat.displacement_min}л`)
-  else if (chat.displacement_min != null && chat.displacement_max != null)
-    parts.push(`${chat.displacement_min}–${chat.displacement_max}л`)
-  else if (chat.displacement_min != null) parts.push(`від ${chat.displacement_min}л`)
-  else if (chat.displacement_max != null) parts.push(`до ${chat.displacement_max}л`)
-  if (chat.drive) parts.push(chat.drive)
-  if (chat.hp_min != null) parts.push(`від ${chat.hp_min} к.с.`)
-  if (chat.seats_min != null) parts.push(`від ${chat.seats_min} місць`)
-  if (chat.color) parts.push(chat.color)
-  if (chat.required_options.length > 0) parts.push(chat.required_options.join(", "))
-
-  return parts.join(" / ") || "без обмежень"
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 //  MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -779,19 +803,14 @@ export async function POST(req: Request) {
 
     const result = await triggerParser(answers ?? [], orderId, chat, wantsMore || hasPreviousCars)
     const count = result?.count ?? 0
-    const filterDesc = describeFilters(chat, base)
+    const foundCars = result?.cars ?? []
 
-    let message: string
-    if (count > 0) {
-      message = `Готово, ${count} ${count === 1 ? "варіант" : count < 5 ? "варіанти" : "варіантів"} за критеріями: ${filterDesc}. Перегляньте нижче. Якщо потрібно звузити вибір — скажіть що саме важливо.`
-    } else {
-      message = `За параметрами (${filterDesc}) зараз нічого не знайшов. Рекомендую розширити пошук — наприклад збільшити бюджет, прибрати обмеження по пробігу або розглянути суміжні моделі. Що скоригуємо?`
-    }
+    const message = await generateSearchComment(foundCars, count, chat, tags)
 
     return NextResponse.json({
       message,
       searching: false,
-      cars: result?.cars ?? [],
+      cars: foundCars,
       chatPreferences: chat,
     })
   }
@@ -804,10 +823,12 @@ export async function POST(req: Request) {
     const orderId = clientOrderId ?? crypto.randomUUID()
     const result = await triggerParser(answers ?? [], orderId, chatPreferences, true)
     const count = result?.count ?? 0
+    const foundCars = result?.cars ?? []
+    const message = count > 0
+      ? await generateSearchComment(foundCars, count, chatPreferences, tags)
+      : "Більше варіантів за цими параметрами поки немає. Спробуйте трохи змінити критерії — наприклад розширити бюджет або додати ще один тип кузова."
     return NextResponse.json({
-      message: count > 0
-        ? `Ще ${count} ${count === 1 ? "варіант" : count < 5 ? "варіанти" : "варіантів"}.`
-        : "Всі доступні варіанти вже показані.",
+      message,
       searching: false,
       cars: result?.cars ?? [],
       chatPreferences,
@@ -820,25 +841,40 @@ export async function POST(req: Request) {
 
   const hasNoCars = !cars || cars.length === 0
   const carsContext = cars
-    ?.slice(0, 6)
+    ?.slice(0, 8)
     .map(
-      (c: any, i: number) =>
-        `${i + 1}. ${c.year ?? "?"} ${c.make} ${c.model} — €${c.price?.toLocaleString() ?? "?"}, ${c.mileage ? Math.round(c.mileage / 1000) + "k км" : "пробіг ?"}, ${c.fuel_ua || c.fuel || "?"}, ${c.body_type_ua || c.body_type || "?"}, ${c.color_ua || c.color || "?"}`,
+      (c: any, i: number) => {
+        const parts = [
+          `${i + 1}. ${c.year ?? "?"} ${c.make} ${c.model}`,
+          `€${c.price?.toLocaleString() ?? "?"}`,
+          c.mileage ? `${Math.round(c.mileage / 1000)}k км` : null,
+          c.engine || null,
+          c.horsepower ? `${c.horsepower} к.с.` : null,
+          c.fuel_ua || c.fuel || null,
+          c.transmission || null,
+          c.drive || null,
+          c.body_type_ua || c.body_type || null,
+          c.color_ua || c.color || null,
+          c.country_ua || c.country || null,
+        ]
+        return parts.filter(Boolean).join(", ")
+      },
     )
     .join("\n") ?? ""
+  const totalCarsCount = cars?.length ?? 0
 
   const prefsContext = chatPreferences
     ? `\nПоточні параметри пошуку: ${JSON.stringify(chatPreferences)}`
     : ""
 
-  const systemPrompt = `Ти — Олексій, досвідчений консультант Fresh Auto з 8-річним стажем підбору та імпорту авто з Європи. Спілкуєшся українською, дружньо але професійно. Не використовуєш емодзі, зірочки, markdown-розмітку.
+  const systemPrompt = `Ти — досвідчений консультант Fresh Auto з 8-річним стажем підбору та імпорту авто з Європи. Спілкуєшся українською, дружньо але професійно. Не використовуєш емодзі, зірочки, markdown-розмітку.
 
 Критерії клієнта з анкети: ${tags.join(", ") || "не заповнені"}
 ${prefsContext}
 
 ${hasNoCars
     ? "Зараз в каталозі Fresh Auto немає авто за цими критеріями."
-    : `В каталозі Fresh Auto:\n${carsContext}`}
+    : `В каталозі Fresh Auto (показую ${Math.min(8, totalCarsCount)} з ${totalCarsCount}):\n${carsContext}`}
 
 ═══ КОЛИ ВІДПОВІДАТИ TRIGGER_SEARCH ═══
 
@@ -846,31 +882,51 @@ ${hasNoCars
 
 В усіх інших випадках відповідай ТІЛЬКИ звичайним текстом — система автоматично запустить пошук за ключовими словами.
 
+═══ ПІСЛЯ ПОШУКУ — ОБОВ'ЯЗКОВО ═══
+
+Після кожного пошуку ти МУСИШ:
+1. Виділити 1-2 найкращі варіанти і пояснити ЧОМУ вони найкращі (ціна/якість, пробіг, надійність, комплектація).
+2. Коротко попередити про нюанси якщо є (дороге обслуговування, типові проблеми моделі, великий пробіг, вік авто).
+3. Запропонувати одне конкретне уточнення щоб покращити вибірку.
+
+НЕ повторюй сухий список критеріїв ("Diesel / Estate / від 2020 / від 5 місць") — клієнт і так знає що шукав.
+НЕ кажи "перегляньте нижче" — авто автоматично з'являються під чатом.
+НЕ повторюй однакові формулювання — кожна відповідь має бути унікальною.
+
+Приклади ГАРНИХ відповідей після пошуку:
+- "Знайшов 12 варіантів. Найцікавіший — Skoda Superb 2021 за 22k, пробіг всього 65 тисяч. Для сімейного універсала це один з найнадійніших варіантів, і запчастини недорогі. Є ще Volvo V60, але він на 4 тисячі дорожчий — зате безпека на вищому рівні."
+- "6 авто за вашим бюджетом. Зверніть увагу на Peugeot 3008 — він 2023 року з пробігом 63k, майже новий. Jaguar E-Pace дешевший, але пробіг 126 тисяч для Jaguar — це вже зона дорогого ТО, майте це на увазі."
+- "Всього 2 варіанти — чорний універсал на дизелі до 25k це рідкість. Якщо розглянете темно-сірий, варіантів стане помітно більше."
+
+═══ ЕКСПЕРТНІ ЗНАННЯ — використовуй їх ═══
+
+Ти знаєш автомобілі і МУСИШ ділитися знаннями проактивно:
+- Надійність: японські марки (Toyota, Honda, Mazda) — найменше проблем. Німецькі (BMW, Audi, Mercedes) — комфортніші, але сервіс дорожчий.
+- Пробіг: дизель витримує 200-300k км без проблем, бензин 150-200k. Понад 150k для преміум-авто — зона ризику дорогих ремонтів.
+- Вартість володіння: не тільки ціна купівлі, а й страховка, запчастини, витрата палива. Порш чи BMW M-серія — це подвійні витрати на ТО порівняно зі Skoda чи Volvo.
+- Рік: авто 2020+ зазвичай мають сучасні системи безпеки (AEB, LKA). Для родини це важливо.
+- Привід: AWD зручний взимку, але +10-15% витрата палива і складніший сервіс.
+
+Якщо бачиш що клієнт обирає авто з потенційними проблемами — м'яко попередь. Але не лякай, а інформуй.
+
 ═══ СТРАТЕГІЯ УТОЧНЕНЬ ═══
 
-Якщо у клієнта бракує ключових параметрів — задавай ОДНЕ конкретне питання (не декілька одразу).
-Пріоритет уточнень (питай в такому порядку якщо не задано):
-1. Марка/модель (якщо не вказано)
-2. Бюджет (якщо не вказано)
-3. Тип палива — бензин, дизель, електро (якщо не вказано)
-4. Рік — від якого (якщо не вказано)
-5. Пробіг — максимальний (якщо не вказано і є авто з великим пробігом)
-
-Приклади уточнень:
-- "Є конкретна модель чи розглядаєте будь-який кросовер?"
-- "Який бюджет орієнтовно?"
-- "Бензин чи дизель — є перевага?"
-- "Пробіг важливий? Є варіанти від 50k до 200k км."
+Якщо бракує ключових параметрів — задавай ОДНЕ конкретне питання.
+Пріоритет:
+1. Марка/модель
+2. Бюджет
+3. Тип палива
+4. Рік від якого
+5. Максимальний пробіг
 
 ═══ СТИЛЬ ═══
 
-Ти НЕ бот. Думаєш як автоексперт, не як довідник. Приклади:
-- "Octavia на дизелі — правильний вибір, практична і надійна. З якого року дивимось?"
-- "Знайшов 20 варіантів. Більшість 1.6 TDI — якщо потрібен об'єм від 2.0, скажіть."
-- "Розумію. Покажу тільки 2.0 TDI і вище."
-- "З пробігом до 100k буде менше варіантів, але вибірка якісніша."
-
-Після пошуку — коротко прокоментуй результат і запропонуй одне конкретне уточнення.
+Говори як живий автоексперт, НЕ як бот-довідник.
+- Кожна відповідь різна за формулюванням — не повторюйся.
+- Будь конкретним — називай моделі, цифри, факти.
+- Коротко — 2-4 речення, не простирадла тексту.
+- Якщо клієнт питає твою думку — давай чітку рекомендацію з обгрунтуванням.
+- Якщо варіантів мало — сам пропонуй що змінити (колір, бюджет +2-3k, кузов) щоб побільшало.
 
 НЕ кажи "я не маю доступу", "зверніться до менеджера" замість пошуку.
 НЕ пропонуй зателефонувати ЗАМІСТЬ пошуку — тільки для оформлення.

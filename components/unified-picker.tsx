@@ -640,7 +640,7 @@ function AIChat({
           <Sparkles className="h-3.5 w-3.5 text-[#00e5b4]" />
         </div>
         <div>
-          <div className="text-sm font-medium text-white">Олексій — AI-консультант</div>
+          <div className="text-sm font-medium text-white">AI-консультант Fresh Auto</div>
           <div className="flex items-center gap-1 text-[10px] text-white/22">
             <motion.span
               animate={{ opacity: searching ? [0.4, 1, 0.4] : 1 }}
@@ -936,10 +936,15 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
   const fetchResults = useCallback(async (finalAnswers: Answer[]) => {
     setLoadingResults(true)
     try {
-      const res = await fetch("/api/ai-picker/search", {
+      const res = await fetch("/api/ai-picker", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers: finalAnswers }),
+        body: JSON.stringify({
+          messages: [],
+          answers: finalAnswers,
+          triggerSearch: true,
+          clientOrderId: crypto.randomUUID(),
+        }),
       })
       const data = await res.json()
       setResults((data.cars ?? []).map(mapApiCar))

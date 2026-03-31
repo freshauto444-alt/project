@@ -381,6 +381,7 @@ function SortSelect({
   const ref = useRef<HTMLDivElement>(null)
 
   const options = [
+    { value: "value-desc",  label: "Вигідність", dir: "★" },
     { value: "price-asc",   label: "Ціна",       dir: "↑" },
     { value: "price-desc",  label: "Ціна",       dir: "↓" },
     { value: "year-desc",   label: "Рік",        dir: "↓" },
@@ -948,6 +949,26 @@ function ImageLightbox({ images, startIndex, car, onClose }: {
 }
 
 /* ═══════════════════════════════════════════
+   VALUE SCORE — price/quality ranking
+   ═══════════════════════════════════════════ */
+const CUR_YEAR = new Date().getFullYear()
+function valueScore(car: Car): number {
+  let s = 0
+  if (car.year) s += Math.max(0, 30 - (CUR_YEAR - car.year) * 3)
+  if (car.mileage != null) s += Math.max(0, 25 - car.mileage / 12000)
+  else s += 10
+  if (car.price && car.year) {
+    const expected = Math.max(10000, (CUR_YEAR - car.year) * 4000 + 15000)
+    const r = car.price / expected
+    s += r <= 0.7 ? 25 : r <= 1.0 ? 20 : r <= 1.3 ? 12 : 5
+  }
+  if (car.image) s += 10
+  if (car.safetyFeatures?.length > 0 || car.comfortFeatures?.length > 0) s += 5
+  if (car.horsepower >= 150) s += 5
+  return s
+}
+
+/* ═══════════════════════════════════════════
    MAIN CATALOG COMPONENT
    ═══════════════════════════════════════════ */
 interface CatalogProps {
@@ -955,6 +976,8 @@ interface CatalogProps {
   user?: { name: string; email: string } | null
   cars: Car[]
 }
+
+const PAGE_SIZE = 20
 
 export default function InventoryCatalog({ onSelectCar, user, cars: allCars }: CatalogProps) {
   const { formatPrice } = useSettings()
@@ -975,7 +998,8 @@ export default function InventoryCatalog({ onSelectCar, user, cars: allCars }: C
 
   // View state
   const [view, setView] = useState<"grid" | "list">("grid")
-  const [sortBy, setSortBy] = useState<string>("price-asc")
+  const [sortBy, setSortBy] = useState<string>("value-desc")
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [showFilters, setShowFilters] = useState(false)
   const [likes, setLikes] = useState<Set<string>>(new Set())
   const [lightbox, setLightbox] = useState<{ car: Car; index: number } | null>(null)
@@ -1026,6 +1050,7 @@ export default function InventoryCatalog({ onSelectCar, user, cars: allCars }: C
     })
 
     switch (sortBy) {
+      case "value-desc": result.sort((a, b) => valueScore(b) - valueScore(a)); break
       case "price-asc": result.sort((a, b) => a.price - b.price); break
       case "price-desc": result.sort((a, b) => b.price - a.price); break
       case "year-desc": result.sort((a, b) => b.year - a.year); break
@@ -1034,6 +1059,13 @@ export default function InventoryCatalog({ onSelectCar, user, cars: allCars }: C
     }
     return result
   }, [selMakes, selModels, selBody, selFuel, selDrive, selTrans, selCond, selCountry, priceRange, yearRange, hpRange, mileageRange, searchQ, sortBy])
+
+  // Reset pagination when filters/sort change
+  const filteredKey = `${selMakes}${selModels}${selBody}${selFuel}${selDrive}${selTrans}${selCond}${selCountry}${priceRange}${yearRange}${hpRange}${mileageRange}${searchQ}${sortBy}`
+  useEffect(() => { setVisibleCount(PAGE_SIZE) }, [filteredKey])
+
+  const withImage = useMemo(() => filtered.filter(car => car.image), [filtered])
+  const visible = useMemo(() => withImage.slice(0, visibleCount), [withImage, visibleCount])
 
   const activeCount = [selMakes, selModels, selBody, selFuel, selDrive, selTrans, selCond, selCountry].filter(a => a.length > 0).length
     + (priceRange[0] > 0 || priceRange[1] < 500000 ? 1 : 0)
@@ -1107,7 +1139,7 @@ export default function InventoryCatalog({ onSelectCar, user, cars: allCars }: C
           </div>
 
           {/* Count */}
-          <span className="hidden text-xs text-muted-foreground/50 tabular-nums lg:block">{filtered.length} {"авто"}</span>
+          <span className="hidden text-xs text-muted-foreground/50 tabular-nums lg:block">{Math.min(visibleCount, withImage.length)} / {withImage.length} {"авто"}</span>
         </div>
       </div>
 
@@ -1194,31 +1226,55 @@ export default function InventoryCatalog({ onSelectCar, user, cars: allCars }: C
               </button>
             </div>
           ) : view === "grid" ? (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filtered.filter(car => car.image).map(car => (
-                <CarCard
-                  key={car.id}
-                  car={car}
-                  onSelect={onSelectCar}
-                  onGallery={(c, i) => setLightbox({ car: c, index: i })}
-                  liked={likes.has(car.id)}
-                  onLike={() => toggleLike(car.id)}
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {visible.map(car => (
+                  <CarCard
+                    key={car.id}
+                    car={car}
+                    onSelect={onSelectCar}
+                    onGallery={(c, i) => setLightbox({ car: c, index: i })}
+                    liked={likes.has(car.id)}
+                    onLike={() => toggleLike(car.id)}
+                  />
+                ))}
+              </div>
+              {visibleCount < withImage.length && (
+                <div className="flex justify-center mt-6">
+                  <button
+                    onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
+                    className="rounded-xl bg-primary/[0.1] px-8 py-3 text-sm font-medium text-primary hover:bg-primary/[0.15] transition-all cursor-pointer"
+                  >
+                    Показати більше ({withImage.length - visibleCount} ще)
+                  </button>
+                </div>
+              )}
+            </>
           ) : (
-            <div className="flex flex-col gap-3 w-full">
-              {filtered.filter(car => car.image).map(car => (
-                <CarListItem
-                  key={car.id}
-                  car={car}
-                  onSelect={onSelectCar}
-                  onGallery={(c, i) => setLightbox({ car: c, index: i })}
-                  liked={likes.has(car.id)}
-                  onLike={() => toggleLike(car.id)}
-                />
-              ))}
-            </div>
+            <>
+              <div className="flex flex-col gap-3 w-full">
+                {visible.map(car => (
+                  <CarListItem
+                    key={car.id}
+                    car={car}
+                    onSelect={onSelectCar}
+                    onGallery={(c, i) => setLightbox({ car: c, index: i })}
+                    liked={likes.has(car.id)}
+                    onLike={() => toggleLike(car.id)}
+                  />
+                ))}
+              </div>
+              {visibleCount < withImage.length && (
+                <div className="flex justify-center mt-6">
+                  <button
+                    onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
+                    className="rounded-xl bg-primary/[0.1] px-8 py-3 text-sm font-medium text-primary hover:bg-primary/[0.15] transition-all cursor-pointer"
+                  >
+                    Показати більше ({withImage.length - visibleCount} ще)
+                  </button>
+                </div>
+              )}
+            </>
           )}
       </div>
 
