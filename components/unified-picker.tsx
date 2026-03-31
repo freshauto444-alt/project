@@ -523,10 +523,12 @@ function AIChat({
   answers,
   cars,
   onNewCars,
+  onPrefsChange,
 }: {
   answers: Answer[]
   cars: CarType[]
   onNewCars: (cars: CarType[]) => void
+  onPrefsChange?: (prefs: any) => void
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
@@ -573,7 +575,7 @@ function AIChat({
       })
       const data = await res.json()
       setMessages(m => [...m, { role: "assistant", content: data.message }])
-      if (data.chatPreferences) setChatPreferences(data.chatPreferences)
+      if (data.chatPreferences) { setChatPreferences(data.chatPreferences); onPrefsChange?.(data.chatPreferences) }
       onNewCars((data.cars ?? []).map(mapApiCar))
     } catch {
       setMessages(m => [
@@ -606,7 +608,7 @@ function AIChat({
       const data = await res.json()
 
       // Update preferences if returned
-      if (data.chatPreferences) setChatPreferences(data.chatPreferences)
+      if (data.chatPreferences) { setChatPreferences(data.chatPreferences); onPrefsChange?.(data.chatPreferences) }
 
       // AI decided to search
       if (data.searching && data.clientOrderId) {
@@ -777,10 +779,45 @@ function ResultsScreen({
   onReset: () => void
 }) {
   const [allCars, setAllCars] = useState<CarType[]>(cars)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [chatPrefsRef, setChatPrefsRef] = useState<any>(null)
   useEffect(() => { setAllCars(cars) }, [cars])
   const handleNewCars = useCallback((newCars: CarType[]) => {
     setAllCars(newCars)
   }, [])
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !chatPrefsRef) return
+    setLoadingMore(true)
+    try {
+      const res = await fetch("/api/ai-picker", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [],
+          answers,
+          loadMore: true,
+          chatPreferences: chatPrefsRef,
+        }),
+      })
+      const data = await res.json()
+      if (data.cars?.length > 0) {
+        const mapped = (data.cars as any[]).map(mapApiCar)
+        // Deduplicate by source_url or id
+        setAllCars(prev => {
+          const existingKeys = new Set(prev.map(c => c.sourceUrl ?? c.source_url ?? c.id))
+          const fresh = mapped.filter(c => {
+            const key = c.sourceUrl ?? c.source_url ?? c.id
+            return !key || !existingKeys.has(key)
+          })
+          return [...prev, ...fresh]
+        })
+      }
+      if (data.chatPreferences) setChatPrefsRef(data.chatPreferences)
+    } catch { /* ignore */ } finally {
+      setLoadingMore(false)
+    }
+  }, [loadingMore, chatPrefsRef, answers])
 
   return (
     <motion.div
@@ -791,7 +828,7 @@ function ResultsScreen({
     >
       <CriteriaBar answers={answers} onReset={onReset} />
 
-      <AIChat answers={answers} cars={allCars} onNewCars={handleNewCars} />
+      <AIChat answers={answers} cars={allCars} onNewCars={handleNewCars} onPrefsChange={setChatPrefsRef} />
 
       {/* Results header */}
       <div className="flex items-center justify-between">
@@ -834,18 +871,49 @@ function ResultsScreen({
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {allCars.filter(car => car.image).map((car, i) => (
-            <motion.div
-              key={car.id ?? `car-${i}`}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.06 }}
-            >
-              <ResultCard car={car} onClick={() => onSelectCar(car)} />
-            </motion.div>
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {allCars.filter(car => car.image).map((car, i) => (
+              <motion.div
+                key={car.id ?? `car-${i}`}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.06 }}
+              >
+                <ResultCard car={car} onClick={() => onSelectCar(car)} />
+              </motion.div>
+            ))}
+          </div>
+
+          {chatPrefsRef && (
+            <div className="flex justify-center pt-2">
+              <motion.button
+                whileTap={{ scale: 0.95 }}
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="flex items-center gap-2 rounded-2xl border border-white/[0.07] px-5 py-2.5 text-sm text-white/50 transition-all hover:border-[#00e5b4]/20 hover:text-[#00e5b4] cursor-pointer disabled:opacity-40"
+              >
+                {loadingMore ? (
+                  <>
+                    <motion.span
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                      className="block h-3.5 w-3.5"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </motion.span>
+                    Шукаю ще…
+                  </>
+                ) : (
+                  <>
+                    <Search className="h-3.5 w-3.5" />
+                    Завантажити ще авто
+                  </>
+                )}
+              </motion.button>
+            </div>
+          )}
+        </>
       )}
     </motion.div>
   )

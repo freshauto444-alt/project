@@ -34,8 +34,12 @@ interface ChatPreferences {
   year_from: number | null
   year_to: number | null
   transmission: string | null
+  drive: string | null
   displacement_min: number | null
   displacement_max: number | null
+  hp_min: number | null
+  seats_min: number | null
+  purpose_body_types: string[]
   offset?: number
 }
 
@@ -98,6 +102,48 @@ function normalizeColor(text: string): string | null {
 //  Extract params from survey answers
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ── Purpose → implicit filter presets ────────────────────────────────────────
+// Each purpose sets soft defaults that get merged with explicit user choices.
+// Explicit survey answers (body, fuel, etc.) always override these.
+interface PurposePreset {
+  body_types?: string[]      // preferred body types
+  hp_min?: number            // minimum horsepower
+  displacement_min?: number  // minimum engine displacement (liters)
+  seats_min?: number         // minimum seats
+  drive?: string             // preferred drive type
+  transmission?: string      // preferred transmission
+}
+
+const PURPOSE_PRESETS: Record<string, PurposePreset> = {
+  "Щоденні поїздки по місту": {
+    body_types: ["Hatchback", "Sedan", "SUV"],
+    // compact, fuel-efficient — no hp/displacement constraints
+  },
+  "Далекі подорожі та автобани": {
+    body_types: ["Sedan", "Estate", "SUV"],
+    displacement_min: 2.0,
+    hp_min: 150,
+  },
+  "Спорт та драйв": {
+    body_types: ["Coupe", "Sedan", "Hatchback", "Convertible"],
+    hp_min: 300,
+    displacement_min: 2.0,
+  },
+  "Бізнес та представницький клас": {
+    body_types: ["Sedan", "SUV"],
+    hp_min: 200,
+    displacement_min: 2.0,
+  },
+  "Для сім'ї з дітьми": {
+    body_types: ["SUV", "Van", "Estate"],
+    seats_min: 5,
+  },
+  "Інвестиція / колекціонування": {
+    body_types: ["Coupe", "Convertible", "Sedan"],
+    hp_min: 250,
+  },
+}
+
 function extractSearchParams(answers: Answer[]) {
   const byId = Object.fromEntries(answers.map(a => [a.questionId, a]))
   const budgetStr = byId.budget?.selected[0] ?? byId.budget?.custom ?? ""
@@ -132,6 +178,30 @@ function extractSearchParams(answers: Answer[]) {
     "Позашляховик": "SUV", "Кросовер": "SUV", "Мінівен": "Van",
     "Купе": "Coupe", "Кабріолет": "Convertible",
   }
+  const driveMap: Record<string, string> = {
+    "Передній (FWD)": "FWD", "Задній (RWD)": "RWD", "Повний (AWD/4WD)": "AWD",
+  }
+
+  // ── Purpose presets ────────────────────────────────────────────────────
+  const purposes = byId.purpose?.selected ?? []
+  let purposeBodyTypes: string[] = []
+  let purposeHpMin: number | null = null
+  let purposeDisplacementMin: number | null = null
+  let purposeSeatsMin: number | null = null
+
+  for (const p of purposes) {
+    const preset = PURPOSE_PRESETS[p]
+    if (!preset) continue
+    if (preset.body_types) purposeBodyTypes.push(...preset.body_types)
+    if (preset.hp_min && (purposeHpMin == null || preset.hp_min > purposeHpMin))
+      purposeHpMin = preset.hp_min
+    if (preset.displacement_min && (purposeDisplacementMin == null || preset.displacement_min > purposeDisplacementMin))
+      purposeDisplacementMin = preset.displacement_min
+    if (preset.seats_min && (purposeSeatsMin == null || preset.seats_min > purposeSeatsMin))
+      purposeSeatsMin = preset.seats_min
+  }
+  // Deduplicate body types from purposes
+  purposeBodyTypes = Array.from(new Set(purposeBodyTypes))
 
   return {
     year_from: yearFrom && !isNaN(yearFrom) ? yearFrom : null,
@@ -141,6 +211,11 @@ function extractSearchParams(answers: Answer[]) {
     fuel: fuelMap[byId.fuel?.selected[0] ?? ""] ?? null,
     transmission: transmissionMap[byId.transmission?.selected[0] ?? ""] ?? null,
     body_type: bodyMap[byId.body?.selected[0] ?? ""] ?? null,
+    drive: driveMap[byId.drive?.selected[0] ?? ""] ?? null,
+    purpose_body_types: purposeBodyTypes,
+    hp_min: purposeHpMin,
+    displacement_min: purposeDisplacementMin,
+    seats_min: purposeSeatsMin,
   }
 }
 
@@ -184,7 +259,8 @@ async function extractFromChat(
     budget_min: null, budget_max: null,
     color: null, mileage_max: null, mileage_min: null,
     required_options: [], year_from: null, year_to: null, transmission: null,
-    displacement_min: null, displacement_max: null,
+    drive: null, displacement_min: null, displacement_max: null,
+    hp_min: null, seats_min: null, purpose_body_types: [],
   }
 
   try {
@@ -233,6 +309,15 @@ ${prevContext}
 - "октавія" / "октавия" → make: "Skoda", model: "Octavia"
 - "мазда 6" → make: "Mazda", model: "6"
 
+ПРИВІД:
+- "повний привід" / "4х4" / "AWD" → drive: "AWD"
+- "передній" / "FWD" → drive: "FWD"
+- "задній" / "RWD" → drive: "RWD"
+
+ПОТУЖНІСТЬ:
+- "від 300 коней" / "потужний" → hp_min: 300
+- "від 200 к.с." → hp_min: 200
+
 Поверни JSON (ОБОВ'ЯЗКОВО усі поля, null якщо не задано):
 {
   "pairs": [{"make": "...", "model": "..."}],
@@ -240,9 +325,11 @@ ${prevContext}
   "fuel": "Petrol"|"Diesel"|"Electric"|"Hybrid" або null,
   "body_type": "Sedan"|"Estate"|"SUV"|"Hatchback"|"Coupe"|"Convertible"|"Van" або null,
   "transmission": "Automatic"|"Manual" або null,
+  "drive": "AWD"|"FWD"|"RWD" або null,
   "color": "Black"|"White"|"Grey"|"Blue"|"Red" тощо або null,
   "mileage_max": число км або null,
   "mileage_min": число км або null,
+  "hp_min": число (к.с.) або null,
   "required_options": ["leather","panorama","carplay","navigation","camera","heated seats"] або [],
   "year_from": число або null,
   "year_to": число або null,
@@ -308,12 +395,18 @@ ${prevContext}
         ? (typeof parsed.year_to === "number" ? parsed.year_to : null)
         : prev.year_to,
       transmission: mergeField("transmission", prev.transmission),
+      drive: mergeField("drive", prev.drive),
       displacement_min: "displacement_min" in parsed
         ? (typeof parsed.displacement_min === "number" ? parsed.displacement_min : null)
         : prev.displacement_min,
       displacement_max: "displacement_max" in parsed
         ? (typeof parsed.displacement_max === "number" ? parsed.displacement_max : null)
         : prev.displacement_max,
+      hp_min: "hp_min" in parsed
+        ? (typeof parsed.hp_min === "number" ? parsed.hp_min : null)
+        : prev.hp_min,
+      seats_min: prev.seats_min,  // only from purpose presets, not from chat
+      purpose_body_types: prev.purpose_body_types,  // only from purpose presets
     }
   } catch (e) {
     console.error("[extractFromChat]", e)
@@ -349,6 +442,7 @@ async function triggerParser(
   answers: Answer[],
   clientOrderId: string,
   chat: ChatPreferences,
+  skipCache: boolean = false,
 ) {
   if (!PARSER_URL) return null
   const base = extractSearchParams(answers)
@@ -371,9 +465,11 @@ async function triggerParser(
     fuel: chat.fuel ?? base.fuel,
     transmission: chat.transmission ?? base.transmission,
     body_type: chat.body_type ?? base.body_type,
-    displacement_min: chat.displacement_min ?? null,
+    drive: chat.drive ?? base.drive ?? null,
+    displacement_min: chat.displacement_min ?? base.displacement_min ?? null,
     displacement_max: chat.displacement_max ?? null,
     client_order_id: clientOrderId,
+    skip_cache: skipCache,
   }
 
   const pairs: CarPair[] = chat.pairs.length > 0 ? chat.pairs : [{ make: null, model: null }]
@@ -396,7 +492,19 @@ async function triggerParser(
   }
 
   // ── Client-side filtering (params that parser doesn't support) ──────────
-  allCars = filterCarsClientSide(allCars, chat)
+  // Merge purpose presets into prefs for filtering
+  const filterPrefs: ChatPreferences = {
+    ...chat,
+    displacement_min: chat.displacement_min ?? base.displacement_min ?? null,
+    displacement_max: chat.displacement_max ?? null,
+    hp_min: chat.hp_min ?? base.hp_min ?? null,
+    seats_min: chat.seats_min ?? base.seats_min ?? null,
+    drive: chat.drive ?? base.drive ?? null,
+    purpose_body_types: chat.purpose_body_types.length > 0
+      ? chat.purpose_body_types
+      : base.purpose_body_types ?? [],
+  }
+  allCars = filterCarsClientSide(allCars, filterPrefs)
 
   return { count: allCars.length, cars: allCars }
 }
@@ -488,6 +596,45 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
     })
   }
 
+  // Drive (AWD/FWD/RWD)
+  if (prefs.drive) {
+    filtered = filtered.filter(c => {
+      const carDrive = (c.drive ?? "").toUpperCase()
+      if (!carDrive || carDrive === "UNKNOWN") return true
+      const wanted = prefs.drive!.toUpperCase()
+      // AWD also matches 4WD, 4x4
+      if (wanted === "AWD") return ["AWD", "4WD", "4X4", "ALL"].some(k => carDrive.includes(k))
+      return carDrive.includes(wanted)
+    })
+  }
+
+  // Horsepower minimum (from purpose presets or chat)
+  if (prefs.hp_min != null) {
+    filtered = filtered.filter(c => {
+      const hp = c.horsepower ?? c.hp
+      if (!hp) return true // keep if unknown
+      return hp >= prefs.hp_min!
+    })
+  }
+
+  // Seats minimum (from purpose: "Для сім'ї з дітьми" → 5+)
+  if (prefs.seats_min != null) {
+    filtered = filtered.filter(c => {
+      if (!c.seats) return true // keep if unknown
+      return c.seats >= prefs.seats_min!
+    })
+  }
+
+  // Purpose body types (soft filter: if car has known body type, it must match one)
+  if (prefs.purpose_body_types.length > 0 && !prefs.body_type) {
+    const allowed = prefs.purpose_body_types.map(b => b.toLowerCase())
+    filtered = filtered.filter(c => {
+      const carBody = (c.body_type ?? c.bodyType ?? "").toLowerCase()
+      if (!carBody || carBody === "unknown" || carBody === "other") return true
+      return allowed.some(a => carBody.includes(a))
+    })
+  }
+
   // Required options
   if (prefs.required_options.length > 0) {
     filtered = filtered.filter(c => {
@@ -537,6 +684,9 @@ function describeFilters(chat: ChatPreferences, base: ReturnType<typeof extractS
     parts.push(`${chat.displacement_min}–${chat.displacement_max}л`)
   else if (chat.displacement_min != null) parts.push(`від ${chat.displacement_min}л`)
   else if (chat.displacement_max != null) parts.push(`до ${chat.displacement_max}л`)
+  if (chat.drive) parts.push(chat.drive)
+  if (chat.hp_min != null) parts.push(`від ${chat.hp_min} к.с.`)
+  if (chat.seats_min != null) parts.push(`від ${chat.seats_min} місць`)
   if (chat.color) parts.push(chat.color)
   if (chat.required_options.length > 0) parts.push(chat.required_options.join(", "))
 
@@ -584,6 +734,13 @@ export async function POST(req: Request) {
     if (!chat.body_type && base.body_type) chat.body_type = base.body_type
     if (!chat.year_from && base.year_from) chat.year_from = base.year_from
     if (!chat.transmission && base.transmission) chat.transmission = base.transmission
+    if (!chat.drive && base.drive) chat.drive = base.drive
+    // Purpose presets → merge into chat if not overridden by explicit chat values
+    if (chat.hp_min == null && base.hp_min != null) chat.hp_min = base.hp_min
+    if (chat.seats_min == null && base.seats_min != null) chat.seats_min = base.seats_min
+    if (chat.displacement_min == null && base.displacement_min != null) chat.displacement_min = base.displacement_min
+    if (chat.purpose_body_types.length === 0 && base.purpose_body_types.length > 0)
+      chat.purpose_body_types = base.purpose_body_types
 
     console.log("[ai-picker] search params:", JSON.stringify(chat))
 
@@ -598,7 +755,12 @@ export async function POST(req: Request) {
       })
     }
 
-    const result = await triggerParser(answers ?? [], orderId, chat)
+    // Detect "more results" requests — skip cache so parser runs fresh
+    const lastMsg = (messages as ChatMessage[])?.filter(m => m.role === "user").slice(-1)[0]?.content?.toLowerCase() ?? ""
+    const wantsMore = /більше|ще авто|ще варіант|більше варіант|більше авто|more|знайди ще|шукай ще|мало результат/.test(lastMsg)
+    const hasPreviousCars = cars && cars.length > 0
+
+    const result = await triggerParser(answers ?? [], orderId, chat, wantsMore || hasPreviousCars)
     const count = result?.count ?? 0
     const filterDesc = describeFilters(chat, base)
 
@@ -618,21 +780,20 @@ export async function POST(req: Request) {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  //  LOAD MORE
+  //  LOAD MORE — button click, always skip cache
   // ═══════════════════════════════════════════════════════════════════════════
 
   if (loadMore && chatPreferences) {
-    const offset = chatPreferences.offset ?? 20
     const orderId = clientOrderId ?? crypto.randomUUID()
-    const result = await triggerParser(answers ?? [], orderId, chatPreferences)
+    const result = await triggerParser(answers ?? [], orderId, chatPreferences, true)
     const count = result?.count ?? 0
     return NextResponse.json({
       message: count > 0
-        ? `Ще ${count} варіантів.`
+        ? `Ще ${count} ${count === 1 ? "варіант" : count < 5 ? "варіанти" : "варіантів"}.`
         : "Всі доступні варіанти вже показані.",
       searching: false,
       cars: result?.cars ?? [],
-      chatPreferences: { ...chatPreferences, offset: offset + 20 },
+      chatPreferences,
     })
   }
 
