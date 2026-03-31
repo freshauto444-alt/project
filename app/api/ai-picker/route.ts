@@ -506,6 +506,9 @@ async function triggerParser(
   }
   allCars = filterCarsClientSide(allCars, filterPrefs)
 
+  // Only return cars with images (UI filters them out anyway)
+  allCars = allCars.filter(c => c.image)
+
   return { count: allCars.length, cars: allCars }
 }
 
@@ -547,6 +550,20 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
         })
       })
     }
+  }
+
+  // Year range — hard filter
+  if (prefs.year_from != null) {
+    filtered = filtered.filter(c => {
+      if (!c.year) return true
+      return c.year >= prefs.year_from!
+    })
+  }
+  if (prefs.year_to != null) {
+    filtered = filtered.filter(c => {
+      if (!c.year) return true
+      return c.year <= prefs.year_to!
+    })
   }
 
   // Fuel — hard filter, never show petrol when diesel requested

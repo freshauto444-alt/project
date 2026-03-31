@@ -833,7 +833,7 @@ function ResultsScreen({
       {/* Results header */}
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-white">
-          {loading ? "Шукаємо…" : `Знайдено: ${allCars.length} авто`}
+          {loading ? "Шукаємо…" : `Знайдено: ${allCars.filter(c => c.image).length} авто`}
         </span>
         {!loading && allCars.length > 0 && (
           <span className="flex items-center gap-1 text-[11px] text-white/22">
