@@ -36,6 +36,8 @@ export interface Car {
   countryUa: string | null
   plateType: string | null
   sourceType?: "stock" | "parser_hot" | "parser_custom"
+  sourceUrl?: string
+  sourceSite?: string
   history: {
     date: string
     event: string

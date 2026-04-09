@@ -147,19 +147,29 @@ const PURPOSE_PRESETS: Record<string, PurposePreset> = {
 
 function extractSearchParams(answers: Answer[]) {
   const byId = Object.fromEntries(answers.map(a => [a.questionId, a]))
-  const budgetStr = byId.budget?.selected[0] ?? byId.budget?.custom ?? ""
-  const rangeMatch = budgetStr.match(/([\d\s]+)\s*[–-]\s*([\d\s]+)/)
+  // Budget: selected[0] = min, selected[1] = max (from two-input form)
+  const budgetFromStr = byId.budget?.selected[0] ?? ""
+  const budgetToStr = byId.budget?.selected[1] ?? byId.budget?.custom ?? ""
   let budgetMin: number | null = null
   let budgetMax: number | null = null
-  if (rangeMatch) {
-    budgetMin = parseInt(rangeMatch[1].replace(/\s/g, ""))
-    budgetMax = parseInt(rangeMatch[2].replace(/\s/g, ""))
-  } else if (budgetStr.includes("понад")) {
-    const m = budgetStr.match(/([\d\s]+)/)
-    budgetMin = m ? parseInt(m[1].replace(/\s/g, "")) : null
-  } else {
-    const plain = parseInt(budgetStr.replace(/\D/g, ""))
-    if (!isNaN(plain) && plain > 0) budgetMax = plain
+
+  // Try two separate fields first (new unified picker format)
+  const bFrom = parseInt(budgetFromStr.replace(/\D/g, ""))
+  const bTo = parseInt(budgetToStr.replace(/\D/g, ""))
+  if (!isNaN(bFrom) && bFrom > 0) budgetMin = bFrom
+  if (!isNaN(bTo) && bTo > 0) budgetMax = bTo
+
+  // Fallback: legacy single-string format "30000 – 50000"
+  if (budgetMin == null && budgetMax == null) {
+    const combined = budgetFromStr || budgetToStr
+    const rangeMatch = combined.match(/([\d\s]+)\s*[–-]\s*([\d\s]+)/)
+    if (rangeMatch) {
+      budgetMin = parseInt(rangeMatch[1].replace(/\s/g, ""))
+      budgetMax = parseInt(rangeMatch[2].replace(/\s/g, ""))
+    } else if (combined.includes("понад")) {
+      const m = combined.match(/([\d\s]+)/)
+      budgetMin = m ? parseInt(m[1].replace(/\s/g, "")) : null
+    }
   }
   const yearFromStr = byId.year?.selected[0] ?? byId.year?.custom ?? ""
   const yearToStr = byId.year?.selected[1] ?? ""

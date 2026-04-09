@@ -8,9 +8,9 @@ import {
   SlidersHorizontal, Gauge,
 } from "lucide-react"
 import type { Car as CarType } from "@/lib/data"
+import { calcTotalCost, SOURCE_SITES, ratePriceVsMarket, PRICE_RATING_CONFIG } from "@/lib/constants"
 
 // ─── API → CarType mapper ──────────────────────────────────────────────────────
-// The parser API returns snake_case keys; CarType uses camelCase.
 function mapApiCar(raw: any): CarType {
   return {
     ...raw,
@@ -58,14 +58,32 @@ interface ChatMessage {
   content: string
 }
 
+interface Suggestion {
+  make: string
+  model: string
+  yearRange: string
+  priceRange: string
+  whyRecommended: string
+  concerns: string
+  searchParams: Record<string, any>
+}
+
 // ─── Questions ────────────────────────────────────────────────────────────────
 
 const QUESTIONS: Question[] = [
   {
+    id: "budget",
+    icon: DollarSign,
+    title: "Який ваш бюджет?",
+    subtitle: "Вкажіть діапазон в EUR",
+    multi: false,
+    options: [],
+  },
+  {
     id: "purpose",
     icon: Car,
-    title: "Яка ціль придбання автомобіля?",
-    subtitle: "Можна обрати декілька або написати свій варіант",
+    title: "Яка ціль придбання?",
+    subtitle: "Можна обрати декілька",
     multi: true,
     options: [
       "Щоденні поїздки по місту",
@@ -79,8 +97,8 @@ const QUESTIONS: Question[] = [
   {
     id: "body",
     icon: Car,
-    title: "Який тип кузова вас цікавить?",
-    subtitle: "Можна обрати декілька або написати свій варіант",
+    title: "Який тип кузова?",
+    subtitle: "Можна обрати декілька",
     multi: true,
     options: ["Купе", "Седан", "Позашляховик", "Хетчбек", "Універсал", "Кабріолет"],
   },
@@ -88,7 +106,7 @@ const QUESTIONS: Question[] = [
     id: "fuel",
     icon: Fuel,
     title: "Тип палива",
-    subtitle: "Можна обрати декілька або написати свій варіант",
+    subtitle: "Можна обрати декілька",
     multi: true,
     options: ["Бензин", "Дизель", "Електро", "Гібрид", "Plug-in гібрид"],
   },
@@ -104,7 +122,7 @@ const QUESTIONS: Question[] = [
     id: "transmission",
     icon: Settings2,
     title: "Тип трансмісії",
-    subtitle: "Оберіть один або напишіть свій варіант",
+    subtitle: "Оберіть один",
     multi: false,
     options: ["Автомат", "Механіка", "Робот", "Варіатор"],
   },
@@ -112,24 +130,9 @@ const QUESTIONS: Question[] = [
     id: "drive",
     icon: Zap,
     title: "Який привід?",
-    subtitle: "Оберіть один або напишіть свій варіант",
+    subtitle: "Оберіть один",
     multi: false,
     options: ["Передній (FWD)", "Задній (RWD)", "Повний (AWD/4WD)"],
-  },
-  {
-    id: "budget",
-    icon: DollarSign,
-    title: "Який ваш бюджет?",
-    subtitle: "Вкажіть діапазон в EUR",
-    multi: false,
-    options: [
-      "20 000 – 25 000 EUR",
-      "25 000 – 30 000 EUR",
-      "30 000 – 40 000 EUR",
-      "40 000 – 60 000 EUR",
-      "60 000 – 80 000 EUR",
-      "понад 80 000 EUR",
-    ],
   },
 ]
 
@@ -146,6 +149,10 @@ function buildTags(answers: Answer[]): string[] {
       const from = a.selected[0] ?? ""
       const to = a.selected[1] ?? ""
       if (from || to) tags.push(from && to ? `${from} – ${to}` : from || to)
+    } else if (a.questionId === "budget") {
+      const from = a.selected[0] ?? ""
+      const to = a.selected[1] ?? ""
+      if (from || to) tags.push(to ? `${from} – ${to} EUR` : `${from}+ EUR`)
     } else {
       a.selected.forEach(s => tags.push(s))
       if (a.custom.trim()) tags.push(a.custom.trim())
@@ -154,269 +161,365 @@ function buildTags(answers: Answer[]): string[] {
   return tags
 }
 
-// ─── ProgressBar ─────────────────────────────────────────────────────────────
+// ─── FilterChip ─────────────────────────────────────────────────────────────
 
-function ProgressBar({ current, total }: { current: number; total: number }) {
+function FilterChip({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
   return (
-    <div className="flex items-center gap-3">
-      <span className="shrink-0 font-mono text-[11px] tracking-widest text-[#00e5b4]/55">
-        ПИТАННЯ {current + 1}&nbsp;/&nbsp;{total}
-      </span>
-      <div className="relative h-px flex-1 overflow-hidden rounded-full bg-white/[0.06]">
-        <motion.div
-          className="absolute inset-y-0 left-0 rounded-full bg-[#00e5b4]/50"
-          initial={false}
-          animate={{ width: `${((current + 1) / total) * 100}%` }}
-          transition={{ duration: 0.45, ease: [0.32, 0.72, 0, 1] }}
-        />
-      </div>
-    </div>
-  )
-}
-
-// ─── YearScrollPicker ─────────────────────────────────────────────────────────
-
-const YEAR_ITEM_H = 44
-const CURRENT_YEAR = new Date().getFullYear()
-const YEARS = Array.from({ length: CURRENT_YEAR - 1990 + 1 }, (_, i) => String(CURRENT_YEAR - i))
-
-function YearScrollPicker({
-  selected, onSelect, defaultYear,
-}: {
-  selected: string
-  onSelect: (y: string) => void
-  defaultYear?: string
-}) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  // Only commit selection after the user actually interacts with the picker.
-  // Scroll-snap can fire spurious scroll events on mount — ignore those.
-  const hasInteracted = useRef(false)
-
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const target = selected || defaultYear || ""
-    const idx = target ? YEARS.indexOf(target) : 0
-    if (idx >= 0) {
-      el.scrollTop = idx * YEAR_ITEM_H
-      // Commit the initial/default value so the tag appears even without scrolling
-      if (!selected && target) onSelect(target)
-    }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleScroll = () => {
-    const el = containerRef.current
-    if (!el || !hasInteracted.current) return
-    const idx = Math.round(el.scrollTop / YEAR_ITEM_H)
-    const year = YEARS[Math.max(0, Math.min(idx, YEARS.length - 1))]
-    if (year) onSelect(year)
-  }
-
-  const handleInteract = () => { hasInteracted.current = true }
-
-  return (
-    <div className="relative overflow-hidden rounded-2xl border border-white/[0.07]" style={{ height: 5 * YEAR_ITEM_H }}>
-      {/* Selected row highlight */}
-      <div
-        className="pointer-events-none absolute inset-x-0 z-10 border-y border-[#00e5b4]/20 bg-[#00e5b4]/[0.04]"
-        style={{ top: 2 * YEAR_ITEM_H, height: YEAR_ITEM_H }}
-      />
-
-      <div
-        ref={containerRef}
-        onScroll={handleScroll}
-        onPointerDown={handleInteract}
-        onTouchStart={handleInteract}
-        onWheel={handleInteract}
-        className="h-full overflow-y-scroll"
-        style={{
-          scrollSnapType: "y mandatory",
-          scrollbarWidth: "none",
-          WebkitMaskImage: "linear-gradient(transparent, black 28%, black 72%, transparent)",
-          maskImage: "linear-gradient(transparent, black 28%, black 72%, transparent)",
-        } as React.CSSProperties}
-      >
-        <div style={{ height: 2 * YEAR_ITEM_H }} />
-        {YEARS.map(y => (
-          <div
-            key={y}
-            onClick={() => {
-              hasInteracted.current = true
-              const idx = YEARS.indexOf(y)
-              containerRef.current?.scrollTo({ top: idx * YEAR_ITEM_H, behavior: "smooth" })
-            }}
-            style={{ height: YEAR_ITEM_H, scrollSnapAlign: "center" } as React.CSSProperties}
-            className={`flex cursor-pointer items-center justify-center text-base font-semibold transition-colors ${
-              y === selected ? "text-[#00e5b4]" : "text-white/35"
-            }`}
-          >
-            {y}
-          </div>
-        ))}
-        <div style={{ height: 2 * YEAR_ITEM_H }} />
-      </div>
-    </div>
-  )
-}
-
-// ─── Chip ─────────────────────────────────────────────────────────────────────
-
-function Chip({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
-  return (
-    <motion.button
-      whileTap={{ scale: 0.95 }}
+    <button
       onClick={onClick}
-      className={`flex select-none items-center gap-2 rounded-2xl border px-4 py-2.5 text-sm transition-all cursor-pointer ${
+      className={`rounded-xl border px-3 py-2 text-[13px] font-medium transition-all cursor-pointer ${
         selected
-          ? "border-[#00e5b4]/35 bg-[#00e5b4]/[0.07] text-[#00e5b4]"
-          : "border-white/[0.07] bg-white/[0.025] text-white/50 hover:border-white/[0.12] hover:text-white/70"
+          ? "border-[#00e5b4]/50 bg-[#00e5b4]/10 text-[#00e5b4]"
+          : "border-white/[0.07] text-white/40 hover:border-[#00e5b4]/30 hover:text-white/70"
       }`}
     >
-      <AnimatePresence>
-        {selected && (
-          <motion.span
-            key="check"
-            initial={{ scale: 0, width: 0 }}
-            animate={{ scale: 1, width: 16 }}
-            exit={{ scale: 0, width: 0 }}
-            className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#00e5b4]/20"
-          >
-            <Check className="h-2.5 w-2.5" />
-          </motion.span>
-        )}
-      </AnimatePresence>
       {label}
-    </motion.button>
+    </button>
   )
 }
 
-// ─── QuestionStep ─────────────────────────────────────────────────────────────
+// ─── FilterSection ──────────────────────────────────────────────────────────
 
-function QuestionStep({
-  question, answer, onChange, onNext, onBack, isFirst, isLast,
+function FilterSection({ icon: Icon, title, children }: { icon: React.ElementType; title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+      <label className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-white/30">
+        <Icon className="h-3.5 w-3.5 text-[#00e5b4]/60" />{title}
+      </label>
+      {children}
+    </div>
+  )
+}
+
+// ─── AllFiltersForm (single page with all filters) ──────────────────────────
+
+function AllFiltersForm({
+  answers,
+  onChange,
+  freeText,
+  onFreeTextChange,
+  onSubmit,
+  loading,
 }: {
-  question: Question
-  answer: Answer
-  onChange: (a: Answer) => void
-  onNext: () => void
-  onBack: () => void
-  isFirst: boolean
-  isLast: boolean
+  answers: Answer[]
+  onChange: (idx: number, ans: Answer) => void
+  freeText: string
+  onFreeTextChange: (text: string) => void
+  onSubmit: () => void
+  loading: boolean
 }) {
-  const Icon = question.icon
-  const isYearQuestion = question.id === "year"
-  const canProceed = isYearQuestion || answer.selected.length > 0 || answer.custom.trim().length > 0
+  const byId = Object.fromEntries(answers.map((a, i) => [a.questionId, { answer: a, index: i }]))
 
-  const toggle = (opt: string) => {
-    if (question.multi) {
-      const next = answer.selected.includes(opt)
-        ? answer.selected.filter(s => s !== opt)
-        : [...answer.selected, opt]
-      onChange({ ...answer, selected: next })
+  const toggle = (qIdx: number, opt: string, multi: boolean) => {
+    const ans = answers[qIdx]
+    if (multi) {
+      const next = ans.selected.includes(opt)
+        ? ans.selected.filter(s => s !== opt)
+        : [...ans.selected, opt]
+      onChange(qIdx, { ...ans, selected: next })
     } else {
-      onChange({ ...answer, selected: answer.selected[0] === opt ? [] : [opt] })
+      onChange(qIdx, { ...ans, selected: ans.selected[0] === opt ? [] : [opt] })
     }
   }
 
+  const setBudget = (field: 0 | 1, value: string) => {
+    const raw = value.replace(/[^\d]/g, "")
+    const formatted = raw ? parseInt(raw).toLocaleString("uk-UA") : ""
+    const bi = byId.budget.index
+    const prev = answers[bi].selected
+    const next = field === 0 ? [formatted, prev[1] ?? ""] : [prev[0] ?? "", formatted]
+    onChange(bi, { ...answers[bi], selected: next })
+  }
+
+  const setYear = (field: 0 | 1, value: string) => {
+    const yi = byId.year.index
+    const prev = answers[yi].selected
+    const next = field === 0 ? [value, prev[1] ?? ""] : [prev[0] ?? "", value]
+    onChange(yi, { ...answers[yi], selected: next })
+  }
+
+  const currentYear = new Date().getFullYear()
+  const yearOptions = Array.from({ length: currentYear - 2014 }, (_, i) => String(currentYear - i))
+
+  const inputCls = "w-full rounded-xl border border-white/[0.07] bg-white/[0.03] px-3 py-2.5 text-sm text-white placeholder:text-white/25 focus:border-[#00e5b4]/40 focus:outline-none transition-colors"
+  const selectCls = "w-full rounded-xl border border-white/[0.07] bg-white/[0.03] px-3 py-2.5 text-sm text-white focus:border-[#00e5b4]/40 focus:outline-none transition-colors [&>option]:bg-[#111] [&>option]:text-white"
+
   return (
-    <motion.div
-      initial={{ opacity: 0, x: 28 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -28 }}
-      transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
-      className="flex flex-col gap-6"
-    >
-      {/* Header */}
-      <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-[#00e5b4]/20 bg-[#00e5b4]/[0.07]">
-          <Icon className="h-4 w-4 text-[#00e5b4]/65" />
-        </div>
-        <div>
-          <h2 className="text-lg font-semibold leading-snug text-white">{question.title}</h2>
-          <p className="mt-0.5 text-sm text-white/30">{question.subtitle}</p>
-        </div>
+    <div className="flex flex-col gap-4">
+      {/* AI hint */}
+      <div className="flex items-start gap-3 rounded-2xl border border-[#00e5b4]/20 bg-[#00e5b4]/[0.04] px-4 py-3">
+        <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-[#00e5b4]/60" />
+        <p className="text-[13px] leading-relaxed text-white/50">
+          Вкажіть бюджет та побажання — AI підбере <strong className="text-white">найкращі варіанти</strong> з AutoScout24, Mobile.de, Bytbil та Blocket
+        </p>
       </div>
 
-      {/* Options or Year Range Picker */}
-      {question.id === "year" ? (
-        <div className="flex gap-3">
-          <div className="flex flex-1 flex-col gap-2">
-            <p className="text-center text-xs font-medium text-white/35">Від</p>
-            <YearScrollPicker
-              selected={answer.selected[0] ?? ""}
-              defaultYear="2020"
-              onSelect={y => onChange({ ...answer, selected: [y, answer.selected[1] ?? ""] })}
+      {/* Budget + Year row */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <FilterSection icon={DollarSign} title="Бюджет, EUR">
+          <div className="flex items-center gap-2">
+            <input type="text" inputMode="numeric" placeholder="від 20 000"
+              value={byId.budget.answer.selected[0] ?? ""}
+              onChange={e => setBudget(0, e.target.value)}
+              className={inputCls}
+            />
+            <span className="text-white/20 text-sm">—</span>
+            <input type="text" inputMode="numeric" placeholder="до"
+              value={byId.budget.answer.selected[1] ?? ""}
+              onChange={e => setBudget(1, e.target.value)}
+              className={inputCls}
             />
           </div>
-          <div className="flex flex-1 flex-col gap-2">
-            <p className="text-center text-xs font-medium text-white/35">До</p>
-            <YearScrollPicker
-              selected={answer.selected[1] ?? ""}
-              onSelect={y => onChange({ ...answer, selected: [answer.selected[0] ?? "", y] })}
-            />
+        </FilterSection>
+
+        <FilterSection icon={Calendar} title="Рік випуску">
+          <div className="flex items-center gap-2">
+            <select value={byId.year.answer.selected[0] ?? ""} onChange={e => setYear(0, e.target.value)} className={selectCls}>
+              <option value="">від</option>
+              {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <span className="text-white/20 text-sm">—</span>
+            <select value={byId.year.answer.selected[1] ?? ""} onChange={e => setYear(1, e.target.value)} className={selectCls}>
+              <option value="">до</option>
+              {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
           </div>
+        </FilterSection>
+      </div>
+
+      {/* Body type */}
+      <FilterSection icon={Car} title="Тип кузова">
+        <div className="flex flex-wrap gap-2">
+          {QUESTIONS.find(q => q.id === "body")?.options.map(opt => (
+            <FilterChip key={opt} label={opt}
+              selected={byId.body.answer.selected.includes(opt)}
+              onClick={() => toggle(byId.body.index, opt, true)}
+            />
+          ))}
         </div>
-      ) : (
-        <>
-          <div className="flex flex-wrap gap-2">
-            {question.options.map(opt => (
-              <Chip
-                key={opt}
-                label={opt}
-                selected={answer.selected.includes(opt)}
-                onClick={() => toggle(opt)}
+      </FilterSection>
+
+      {/* Fuel + Transmission + Drive */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <FilterSection icon={Fuel} title="Паливо">
+          <div className="flex flex-wrap gap-1.5">
+            {QUESTIONS.find(q => q.id === "fuel")?.options.map(opt => (
+              <FilterChip key={opt} label={opt}
+                selected={byId.fuel.answer.selected.includes(opt)}
+                onClick={() => toggle(byId.fuel.index, opt, true)}
               />
             ))}
           </div>
+        </FilterSection>
 
-          {/* Custom input */}
+        <FilterSection icon={Settings2} title="КПП">
+          <div className="flex flex-wrap gap-1.5">
+            {QUESTIONS.find(q => q.id === "transmission")?.options.map(opt => (
+              <FilterChip key={opt} label={opt}
+                selected={byId.transmission.answer.selected.includes(opt)}
+                onClick={() => toggle(byId.transmission.index, opt, false)}
+              />
+            ))}
+          </div>
+        </FilterSection>
+
+        <FilterSection icon={Zap} title="Привід">
+          <div className="flex flex-wrap gap-1.5">
+            {["FWD", "RWD", "AWD"].map((opt, i) => {
+              const full = QUESTIONS.find(q => q.id === "drive")?.options[i] ?? opt
+              return (
+                <FilterChip key={opt} label={opt}
+                  selected={byId.drive.answer.selected.includes(full)}
+                  onClick={() => toggle(byId.drive.index, full, false)}
+                />
+              )
+            })}
+          </div>
+        </FilterSection>
+      </div>
+
+      {/* Free text + Submit */}
+      <div className="flex gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-white/25" />
           <input
-            value={answer.custom}
-            onChange={e => onChange({ ...answer, custom: e.target.value })}
-            onKeyDown={e => e.key === "Enter" && onNext()}
-            placeholder="Або напишіть свій варіант..."
-            className="w-full rounded-2xl border border-white/[0.07] bg-white/[0.025] px-4 py-3 text-sm text-white placeholder:text-white/18 outline-none transition-all focus:border-[#00e5b4]/22 focus:bg-white/[0.04]"
+            value={freeText}
+            onChange={e => onFreeTextChange(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && onSubmit()}
+            placeholder="BMW X5, сімейне авто, дизель з повним приводом..."
+            className={`${inputCls} pl-10`}
           />
-        </>
-      )}
-
-      {/* Navigation */}
-      <div className="flex items-center justify-between pt-1">
-        <div className="flex items-center gap-4">
-          {!isFirst && (
-            <button
-              onClick={onBack}
-              className="flex items-center gap-1 text-sm text-white/30 transition-colors hover:text-white/55 cursor-pointer"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-              Назад
-            </button>
-          )}
-          <button
-            onClick={() => {
-              if (isYearQuestion) onChange({ ...answer, selected: [], custom: "" })
-              onNext()
-            }}
-            className="text-sm text-white/20 transition-colors hover:text-white/40 cursor-pointer"
-          >
-            Пропустити
-          </button>
         </div>
+        <button
+          onClick={onSubmit}
+          disabled={loading}
+          className="shrink-0 rounded-xl bg-[#00e5b4] px-6 py-3 text-sm font-semibold text-black hover:brightness-110 transition-all disabled:opacity-40 cursor-pointer"
+        >
+          {loading ? (
+            <span className="flex items-center gap-2">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-black/20 border-t-black" />
+              AI шукає...
+            </span>
+          ) : (
+            <span className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4" /> Підібрати авто
+            </span>
+          )}
+        </button>
+      </div>
+    </div>
+  )
+}
 
-        <motion.button
-          whileTap={{ scale: 0.97 }}
-          onClick={onNext}
-          disabled={!canProceed}
-          className={`flex items-center gap-2 rounded-2xl px-5 py-2.5 text-sm font-medium transition-all cursor-pointer ${
-            canProceed
-              ? "bg-[#00e5b4] text-black hover:brightness-110"
-              : "cursor-not-allowed bg-white/[0.05] text-white/22"
+// ─── SuggestionCard ─────────────────────────────────────────────────────────
+
+function SuggestionCard({
+  suggestion, onApprove, approved, loading,
+}: {
+  suggestion: Suggestion
+  onApprove: () => void
+  approved: boolean
+  loading: boolean
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`rounded-2xl border p-4 transition-all ${
+        approved
+          ? "border-[#00e5b4]/40 bg-[#00e5b4]/[0.06]"
+          : "border-white/[0.06] bg-white/[0.02] hover:border-white/[0.14]"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
+          <h3 className="text-lg font-semibold text-white">
+            {suggestion.make} {suggestion.model}
+          </h3>
+          <div className="mt-1 flex flex-wrap gap-2">
+            <span className="rounded-full bg-white/[0.06] px-2.5 py-0.5 text-xs text-white/50">
+              {suggestion.yearRange}
+            </span>
+            <span className="rounded-full bg-white/[0.06] px-2.5 py-0.5 text-xs text-[#00e5b4]/70">
+              {suggestion.priceRange} EUR
+            </span>
+          </div>
+        </div>
+        <button
+          onClick={onApprove}
+          disabled={loading}
+          className={`shrink-0 rounded-xl px-4 py-2 text-sm font-medium transition-all cursor-pointer ${
+            approved
+              ? "bg-[#00e5b4] text-black"
+              : "border border-white/[0.07] text-white/70 hover:border-[#00e5b4]/40 hover:text-white"
           }`}
         >
-          {isLast ? "Знайти авто" : "Далі"}
-          <ArrowRight className="h-3.5 w-3.5" />
-        </motion.button>
+          {loading ? (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/20 border-t-[#00e5b4]" />
+              Шукаю на 4 сайтах...
+            </span>
+          ) : approved ? (
+            <span className="inline-flex items-center gap-1.5">
+              <Check className="h-3.5 w-3.5" /> Знайдено
+            </span>
+          ) : (
+            "Знайти авто"
+          )}
+        </button>
       </div>
+      <p className="mt-2.5 text-[13px] leading-relaxed text-white/50">
+        {suggestion.whyRecommended}
+      </p>
+      {suggestion.concerns && (
+        <p className="mt-1.5 text-[12px] text-white/30 italic">
+          {suggestion.concerns}
+        </p>
+      )}
+    </motion.div>
+  )
+}
+
+// ─── SuggestionsScreen ──────────────────────────────────────────────────────
+
+function SuggestionsScreen({
+  suggestions, loading, onApprove, onSearchAll, onReset, onBack,
+  approvedIndices, searchingIndex, error,
+}: {
+  suggestions: Suggestion[]
+  loading: boolean
+  onApprove: (idx: number) => void
+  onSearchAll: () => void
+  onReset: () => void
+  onBack: () => void
+  approvedIndices: Set<number>
+  searchingIndex: number | null
+  error: string | null
+}) {
+  return (
+    <motion.div
+      key="suggestions"
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+    >
+      <div className="mb-5 flex flex-col gap-3">
+        <div>
+          <h2 className="text-xl font-bold text-white">AI рекомендує для вас</h2>
+          <p className="mt-1 text-sm text-white/35">
+            Оберіть моделі, які цікавлять — система знайде найкращі пропозиції
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-2 text-xs font-medium text-white/40 hover:text-white hover:border-[#00e5b4]/30 transition-all cursor-pointer"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            Змінити критерії
+          </button>
+          <button
+            onClick={onReset}
+            className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-medium text-white/25 hover:text-white/50 transition-colors cursor-pointer"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Новий пошук
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-4 py-3 text-sm text-red-400">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex flex-col items-center gap-3 py-12">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-[#00e5b4]" />
+          <p className="text-sm text-white/40">AI аналізує ваші побажання...</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {suggestions.map((s, i) => (
+            <SuggestionCard
+              key={`${s.make}-${s.model}-${i}`}
+              suggestion={s}
+              onApprove={() => onApprove(i)}
+              approved={approvedIndices.has(i)}
+              loading={searchingIndex === i}
+            />
+          ))}
+          {suggestions.length > 0 && approvedIndices.size === 0 && (
+            <button
+              onClick={onSearchAll}
+              className="mt-2 rounded-xl border border-white/[0.06] py-3 text-sm text-white/40 hover:border-[#00e5b4]/20 hover:text-white/60 transition-all cursor-pointer"
+            >
+              Або шукати за всіма параметрами без уточнення
+            </button>
+          )}
+        </div>
+      )}
     </motion.div>
   )
 }
@@ -470,7 +573,6 @@ function SearchingBanner() {
   useEffect(() => {
     let current = 0
     const interval = setInterval(() => {
-      // Повільно росте до 95, останні % чекає реальної відповіді
       const increment = current < 60 ? 1.2 : current < 85 ? 0.5 : 0.15
       current = Math.min(current + increment, 95)
       setProgress(current)
@@ -502,8 +604,6 @@ function SearchingBanner() {
         </div>
         <span className="text-[11px] text-[#00e5b4]/60">{Math.round(progress)}%</span>
       </div>
-
-      {/* Progress bar */}
       <div className="h-1 w-full overflow-hidden rounded-full bg-white/[0.05]">
         <motion.div
           className="h-full rounded-full bg-gradient-to-r from-[#00e5b4]/60 to-[#00e5b4]"
@@ -511,19 +611,15 @@ function SearchingBanner() {
           transition={{ duration: 0.8, ease: "easeOut" }}
         />
       </div>
-
       <p className="text-[11px] text-white/25">Переглядаю сотні оголошень — зазвичай 1-3 хвилини</p>
     </motion.div>
   )
 }
 
-// ─── AIChat (замінити ТІЛЬКИ цей компонент в unified-picker.tsx) ──────────────
+// ─── AIChat ─────────────────────────────────────────────────────────────────
 
 function AIChat({
-  answers,
-  cars,
-  onNewCars,
-  onPrefsChange,
+  answers, cars, onNewCars, onPrefsChange,
 }: {
   answers: Answer[]
   cars: CarType[]
@@ -557,7 +653,6 @@ function AIChat({
     if (el) el.scrollTop = el.scrollHeight
   }, [messages, loading, searching])
 
-  // Запуск парсера з передачею chatPreferences
   const runSearch = async (orderId: string, fullMessages: ChatMessage[]) => {
     setSearching(true)
     try {
@@ -570,7 +665,7 @@ function AIChat({
           cars: [],
           triggerSearch: true,
           clientOrderId: orderId,
-          chatPreferences, // Pass previous preferences for cumulative search
+          chatPreferences,
         }),
       })
       const data = await res.json()
@@ -602,22 +697,17 @@ function AIChat({
           messages: next,
           answers,
           cars: cars.slice(0, 8),
-          chatPreferences, // Always pass current preferences
+          chatPreferences,
         }),
       })
       const data = await res.json()
-
-      // Update preferences if returned
       if (data.chatPreferences) { setChatPreferences(data.chatPreferences); onPrefsChange?.(data.chatPreferences) }
-
-      // AI decided to search
       if (data.searching && data.clientOrderId) {
         setMessages(m => [...m, { role: "assistant", content: data.message }])
         setClientOrderId(data.clientOrderId)
         runSearch(data.clientOrderId, next)
         return
       }
-
       setMessages(m => [
         ...m,
         { role: "assistant", content: data.message ?? "Перепрошую, спробуйте ще раз." },
@@ -634,7 +724,6 @@ function AIChat({
 
   return (
     <div className="flex flex-col overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.015]">
-      {/* Header */}
       <div className="flex items-center gap-2.5 border-b border-white/[0.05] px-4 py-3">
         <div className="flex h-7 w-7 items-center justify-center rounded-xl border border-[#00e5b4]/18 bg-[#00e5b4]/[0.07]">
           <Sparkles className="h-3.5 w-3.5 text-[#00e5b4]" />
@@ -651,8 +740,6 @@ function AIChat({
           </div>
         </div>
       </div>
-
-      {/* Messages */}
       <div
         ref={messagesContainerRef}
         className="flex max-h-72 flex-col gap-2.5 overflow-y-auto p-4 scrollbar-thin"
@@ -675,7 +762,6 @@ function AIChat({
             </div>
           </motion.div>
         ))}
-
         {loading && !searching && (
           <div className="flex justify-start">
             <div className="flex items-center gap-1 rounded-2xl rounded-tl-sm bg-white/[0.04] px-3.5 py-3">
@@ -690,11 +776,8 @@ function AIChat({
             </div>
           </div>
         )}
-
         {searching && <SearchingBanner />}
       </div>
-
-      {/* Input */}
       <div className="flex items-center gap-2 border-t border-white/[0.05] p-3">
         <input
           value={input}
@@ -721,9 +804,18 @@ function AIChat({
   )
 }
 
-// ─── ResultCard ───────────────────────────────────────────────────────────────
+// ─── ResultCard (with source badge + price rating) ──────────────────────────
 
-function ResultCard({ car, onClick }: { car: CarType; onClick: () => void }) {
+function ResultCard({ car, onClick, allCars }: { car: CarType; onClick: () => void; allCars: CarType[] }) {
+  const totalCost = car.price ? calcTotalCost(car.price) : null
+  const source = SOURCE_SITES[(car as any).sourceSite || (car as any).source_site || ""] || null
+
+  const sameMakePrices = allCars
+    .filter(c => c.make === car.make && c.price)
+    .map(c => c.price!)
+  const priceInfo = car.price ? ratePriceVsMarket(car.price, sameMakePrices) : null
+  const ratingConfig = priceInfo ? PRICE_RATING_CONFIG[priceInfo.rating] : null
+
   return (
     <div
       onClick={onClick}
@@ -746,8 +838,15 @@ function ResultCard({ car, onClick }: { car: CarType; onClick: () => void }) {
         <div className="absolute bottom-2.5 left-3 text-xs font-semibold text-white drop-shadow">
           {car.year} {car.make} {car.model}
         </div>
+        {/* Source badge */}
+        {source && (
+          <div className="absolute top-2 right-2 rounded-lg bg-black/60 px-2 py-0.5 text-[10px] text-white/70 backdrop-blur-sm">
+            {source.flag} {source.name}
+          </div>
+        )}
       </div>
-      <div className="flex items-center justify-between px-3.5 py-2.5">
+
+      <div className="flex flex-col gap-2 px-3.5 py-2.5">
         <div className="flex items-center gap-3 text-[11px] text-white/32">
           {car.mileage && (
             <span className="flex items-center gap-1">
@@ -755,12 +854,38 @@ function ResultCard({ car, onClick }: { car: CarType; onClick: () => void }) {
               {(car.mileage / 1000).toFixed(0)}k km
             </span>
           )}
-          {/* @ts-ignore */}
           {(car.fuelUa || car.fuel) && <span>{car.fuelUa || car.fuel}</span>}
           {car.transmission && <span>{car.transmission}</span>}
         </div>
-        <div className="text-sm font-semibold text-white">
-          {car.price ? `€${car.price.toLocaleString("uk-UA")}` : "—"}
+
+        <div className="flex items-end justify-between">
+          <div>
+            <div className="text-sm font-semibold text-white">
+              {car.price ? `€${car.price.toLocaleString("uk-UA")}` : "—"}
+            </div>
+            {totalCost && (
+              <div className="text-[11px] text-[#00e5b4]/70">
+                ~€{totalCost.total.toLocaleString("uk-UA")} під ключ
+              </div>
+            )}
+          </div>
+          {ratingConfig && priceInfo && (
+            <div className="flex flex-col items-end gap-0.5">
+              <span className="text-[10px] font-medium" style={{ color: ratingConfig.color }}>
+                {ratingConfig.label}
+              </span>
+              <div className="relative h-1 w-16 rounded-full bg-white/[0.08]">
+                <div
+                  className="absolute top-[-1px] h-[6px] w-[6px] rounded-full"
+                  style={{
+                    left: `${Math.min(95, Math.max(5, priceInfo.percentile))}%`,
+                    backgroundColor: ratingConfig.color,
+                    transform: "translateX(-50%)",
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -770,13 +895,14 @@ function ResultCard({ car, onClick }: { car: CarType; onClick: () => void }) {
 // ─── ResultsScreen ────────────────────────────────────────────────────────────
 
 function ResultsScreen({
-  answers, cars, loading, onSelectCar, onReset,
+  answers, cars, loading, onSelectCar, onReset, onBack,
 }: {
   answers: Answer[]
   cars: CarType[]
   loading: boolean
   onSelectCar: (car: CarType) => void
   onReset: () => void
+  onBack: () => void
 }) {
   const [allCars, setAllCars] = useState<CarType[]>(cars)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -803,11 +929,10 @@ function ResultsScreen({
       const data = await res.json()
       if (data.cars?.length > 0) {
         const mapped = (data.cars as any[]).map(mapApiCar)
-        // Deduplicate by source_url or id
         setAllCars(prev => {
-          const existingKeys = new Set(prev.map(c => c.sourceUrl ?? c.source_url ?? c.id))
+          const existingKeys = new Set(prev.map(c => (c as any).sourceUrl ?? (c as any).source_url ?? c.id))
           const fresh = mapped.filter(c => {
-            const key = c.sourceUrl ?? c.source_url ?? c.id
+            const key = (c as any).sourceUrl ?? (c as any).source_url ?? c.id
             return !key || !existingKeys.has(key)
           })
           return [...prev, ...fresh]
@@ -826,11 +951,26 @@ function ResultsScreen({
       transition={{ duration: 0.35, ease: [0.32, 0.72, 0, 1] }}
       className="flex flex-col gap-5"
     >
-      <CriteriaBar answers={answers} onReset={onReset} />
+      <div className="flex items-center gap-2 mb-2">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-2 text-xs font-medium text-white/40 hover:text-white hover:border-[#00e5b4]/30 transition-all cursor-pointer"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+          Змінити критерії
+        </button>
+        <button
+          onClick={onReset}
+          className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-medium text-white/25 hover:text-white/50 transition-colors cursor-pointer"
+        >
+          <RotateCcw className="h-3 w-3" />
+          Новий пошук
+        </button>
+      </div>
 
+      <CriteriaBar answers={answers} onReset={onReset} />
       <AIChat answers={answers} cars={allCars} onNewCars={handleNewCars} onPrefsChange={setChatPrefsRef} />
 
-      {/* Results header */}
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-white">
           {loading ? "Шукаємо…" : `Знайдено: ${allCars.filter(c => c.image).length} авто`}
@@ -880,11 +1020,10 @@ function ResultsScreen({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.06 }}
               >
-                <ResultCard car={car} onClick={() => onSelectCar(car)} />
+                <ResultCard car={car} onClick={() => onSelectCar(car)} allCars={allCars} />
               </motion.div>
             ))}
           </div>
-
           {chatPrefsRef && (
             <div className="flex justify-center pt-2">
               <motion.button
@@ -921,96 +1060,313 @@ function ResultsScreen({
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 
+type Phase = "form" | "suggestions" | "results"
+
 export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarType) => void }) {
-  const [step, setStep] = useState(0)
   const [answers, setAnswers] = useState<Answer[]>(EMPTY_ANSWERS)
+  const [freeText, setFreeText] = useState("")
   const [results, setResults] = useState<CarType[]>([])
   const [loadingResults, setLoadingResults] = useState(false)
-
-  const isDone = step >= QUESTIONS.length
+  const [phase, setPhase] = useState<Phase>("form")
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([])
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false)
+  const [approvedIndices, setApprovedIndices] = useState<Set<number>>(new Set())
+  const [searchingIndex, setSearchingIndex] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [userBudget, setUserBudget] = useState<{ min?: number; max?: number }>({})
+  const abortRef = useRef<AbortController | null>(null)
 
   const updateAnswer = useCallback((idx: number, ans: Answer) => {
     setAnswers(prev => prev.map((a, i) => (i === idx ? ans : a)))
   }, [])
 
-  const fetchResults = useCallback(async (finalAnswers: Answer[]) => {
-    setLoadingResults(true)
+  // ── Step 1: After form → get AI suggestions ──────────────────────────
+  const fetchSuggestions = useCallback(async (finalAnswers: Answer[], userFreeText?: string) => {
+    setPhase("suggestions")
+    setLoadingSuggestions(true)
+    try {
+      const byId = Object.fromEntries(finalAnswers.map(a => [a.questionId, a]))
+      const fuelMap: Record<string, string> = {
+        "Бензин": "Petrol", "Дизель": "Diesel", "Електро": "Electric", "Гібрид": "Hybrid",
+      }
+      const bodyMap: Record<string, string> = {
+        "Седан": "Sedan", "Хетчбек": "Hatchback", "Універсал": "Estate",
+        "Позашляховик": "SUV", "Купе": "Coupe", "Кабріолет": "Convertible",
+      }
+      const transMap: Record<string, string> = {
+        "Автомат": "Automatic", "Механіка": "Manual", "Робот": "Automatic", "Варіатор": "Automatic",
+      }
+      const driveMap: Record<string, string> = {
+        "Передній (FWD)": "FWD", "Задній (RWD)": "RWD", "Повний (AWD/4WD)": "AWD",
+      }
+
+      const cleanNum = (s: string) => {
+        const digits = s.replace(/[^\d]/g, "")
+        return digits ? parseInt(digits) : NaN
+      }
+      const budgetFromStr = byId.budget?.selected[0] ?? ""
+      const budgetToStr = byId.budget?.selected[1] ?? ""
+      let budgetMin: number | undefined
+      let budgetMax: number | undefined
+      const bFrom = cleanNum(budgetFromStr)
+      const bTo = cleanNum(budgetToStr)
+      if (!isNaN(bFrom) && bFrom > 0) budgetMin = bFrom
+      if (!isNaN(bTo) && bTo > 0) budgetMax = bTo
+
+      setUserBudget({ min: budgetMin, max: budgetMax })
+
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+      setError(null)
+
+      const res = await fetch("/api/ai-picker/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          preferences: {
+            fuel: fuelMap[byId.fuel?.selected[0] ?? ""] ?? null,
+            body_type: bodyMap[byId.body?.selected[0] ?? ""] ?? null,
+            budget_min: budgetMin || 20000,
+            budget_max: budgetMax || undefined,
+            year_from: byId.year?.selected[0] ? parseInt(byId.year.selected[0]) : null,
+            year_to: byId.year?.selected[1] ? parseInt(byId.year.selected[1]) : null,
+            transmission: transMap[byId.transmission?.selected[0] ?? ""] ?? null,
+            drive: driveMap[byId.drive?.selected[0] ?? ""] ?? null,
+            purpose_body_types: byId.purpose?.selected ?? [],
+          },
+          answers: finalAnswers,
+          freeText: userFreeText || undefined,
+        }),
+        signal: controller.signal,
+      })
+      const data = await res.json()
+      if (data.message && (!data.suggestions || data.suggestions.length === 0)) {
+        setError(data.message)
+      }
+      setSuggestions(data.suggestions ?? [])
+    } catch (e: any) {
+      if (e.name !== "AbortError") {
+        setError("Не вдалося з'єднатися з сервером. Спробуйте ще раз.")
+        setSuggestions([])
+      }
+    } finally {
+      setLoadingSuggestions(false)
+    }
+  }, [])
+
+  // ── Step 2: User approves a suggestion → targeted parse ───────────────
+  const handleApproveSuggestion = useCallback(async (idx: number) => {
+    const suggestion = suggestions[idx]
+    if (!suggestion) return
+
+    setSearchingIndex(idx)
+
     try {
       const res = await fetch("/api/ai-picker", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: [],
-          answers: finalAnswers,
-          cacheOnly: true,
+          answers,
+          triggerSearch: true,
+          clientOrderId: crypto.randomUUID(),
+          chatPreferences: {
+            pairs: [{ make: suggestion.searchParams.make, model: suggestion.searchParams.model }],
+            fuel: suggestion.searchParams.fuel ?? null,
+            body_type: suggestion.searchParams.body_type ?? null,
+            budget_min: userBudget.min || suggestion.searchParams.budget_min || 20000,
+            budget_max: userBudget.max || suggestion.searchParams.budget_max || undefined,
+            year_from: suggestion.searchParams.year_from,
+            year_to: suggestion.searchParams.year_to,
+            transmission: suggestion.searchParams.transmission ?? null,
+            drive: suggestion.searchParams.drive ?? null,
+            budget: null, color: null, mileage_max: null, mileage_min: null,
+            required_options: [], displacement_min: null, displacement_max: null,
+            hp_min: null, seats_min: null, purpose_body_types: [],
+          },
         }),
       })
       const data = await res.json()
+      const newCars = (data.cars ?? []).map(mapApiCar)
+
+      setResults(prev => {
+        const existingUrls = new Set(prev.map(c => (c as any).sourceUrl || (c as any).source_url))
+        const unique = newCars.filter((c: CarType) => !existingUrls.has((c as any).sourceUrl || (c as any).source_url))
+        return [...prev, ...unique]
+      })
+
+      if (newCars.length > 0) {
+        setApprovedIndices(prev => new Set(prev).add(idx))
+        setPhase("results")
+        setLoadingResults(false)
+      } else {
+        setError(data.message || `За параметрами ${suggestion.make} ${suggestion.model} авто не знайдено. Спробуйте інший варіант.`)
+      }
+    } catch (e: any) {
+      if (e.name !== "AbortError") {
+        setError(`Не вдалося знайти ${suggestion.make} ${suggestion.model}. Спробуйте інший варіант.`)
+      }
+    } finally {
+      setSearchingIndex(null)
+    }
+  }, [suggestions, answers, userBudget])
+
+  // ── Fallback: search all without suggestions ──────────────────────────
+  const handleSearchAll = useCallback(async () => {
+    setPhase("results")
+    setLoadingResults(true)
+    setError(null)
+
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    const byId = Object.fromEntries(answers.map(a => [a.questionId, a]))
+    const fuelMap: Record<string, string> = {
+      "Бензин": "Petrol", "Дизель": "Diesel", "Електро": "Electric", "Гібрид": "Hybrid",
+    }
+    const bodyMap: Record<string, string> = {
+      "Седан": "Sedan", "Хетчбек": "Hatchback", "Універсал": "Estate",
+      "Позашляховик": "SUV", "Купе": "Coupe", "Кабріолет": "Convertible",
+    }
+    const transMap: Record<string, string> = {
+      "Автомат": "Automatic", "Механіка": "Manual", "Робот": "Automatic", "Варіатор": "Automatic",
+    }
+    const driveMap: Record<string, string> = {
+      "Передній (FWD)": "FWD", "Задній (RWD)": "RWD", "Повний (AWD/4WD)": "AWD",
+    }
+
+    try {
+      const res = await fetch("/api/ai-picker", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [],
+          answers,
+          triggerSearch: true,
+          clientOrderId: crypto.randomUUID(),
+          chatPreferences: {
+            pairs: [],
+            fuel: fuelMap[byId.fuel?.selected[0] ?? ""] ?? null,
+            body_type: bodyMap[byId.body?.selected[0] ?? ""] ?? null,
+            budget_min: userBudget.min || 20000,
+            budget_max: userBudget.max || undefined,
+            year_from: byId.year?.selected[0] ? parseInt(byId.year.selected[0]) : null,
+            year_to: byId.year?.selected[1] ? parseInt(byId.year.selected[1]) : null,
+            transmission: transMap[byId.transmission?.selected[0] ?? ""] ?? null,
+            drive: driveMap[byId.drive?.selected[0] ?? ""] ?? null,
+            budget: null, color: null, mileage_max: null, mileage_min: null,
+            required_options: [], displacement_min: null, displacement_max: null,
+            hp_min: null, seats_min: null, purpose_body_types: [],
+          },
+        }),
+        signal: controller.signal,
+      })
+      const data = await res.json()
       setResults((data.cars ?? []).map(mapApiCar))
-    } catch {
-      setResults([])
+      if (data.cars?.length === 0) {
+        setError("За вашими параметрами авто поки не знайдено. Спробуйте змінити критерії.")
+      }
+    } catch (e: any) {
+      if (e.name !== "AbortError") {
+        setError("Помилка пошуку. Перевірте з'єднання та спробуйте ще раз.")
+        setResults([])
+      }
     } finally {
       setLoadingResults(false)
     }
+  }, [answers, userBudget])
+
+  const goBackToForm = useCallback(() => {
+    abortRef.current?.abort()
+    setPhase("form")
+    setSuggestions([])
+    setApprovedIndices(new Set())
+    setSearchingIndex(null)
+    setError(null)
   }, [])
 
-  const goNext = useCallback(() => {
-    if (step === QUESTIONS.length - 1) {
-      setStep(QUESTIONS.length)
-      fetchResults(answers)
-    } else {
-      setStep(s => s + 1)
-    }
-  }, [step, answers, fetchResults])
-
-  const goBack = useCallback(() => setStep(s => Math.max(0, s - 1)), [])
-
   const reset = useCallback(() => {
-    setStep(0)
+    abortRef.current?.abort()
+    setPhase("form")
+    setFreeText("")
     setAnswers(EMPTY_ANSWERS)
     setResults([])
+    setSuggestions([])
+    setApprovedIndices(new Set())
+    setSearchingIndex(null)
+    setError(null)
   }, [])
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-12">
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold tracking-tight text-white">AI Підбір автомобіля</h1>
-        <p className="mt-2 text-base text-white/32">
-          Дайте відповіді на кілька питань і AI знайде ідеальний варіант.
+    <section className="mx-auto max-w-3xl px-4 py-12" aria-label="AI підбір автомобіля">
+      {/* Header */}
+      <header className="mb-8 text-center">
+        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-[#00e5b4]/20 bg-[#00e5b4]/[0.06] px-4 py-1.5">
+          <Sparkles className="h-3.5 w-3.5 text-[#00e5b4]" />
+          <span className="text-xs font-medium text-[#00e5b4]">AI-підбір</span>
+        </div>
+        <h1 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
+          Знайдіть авто з Європи
+        </h1>
+        <p className="mt-2 text-base text-white/35">
+          {phase === "form"
+            ? "Вкажіть параметри — AI знайде найкращі варіанти з 4 європейських майданчиків"
+            : phase === "suggestions"
+            ? "AI підібрав моделі під ваші параметри. Оберіть — і ми знайдемо реальні пропозиції"
+            : `Знайдено ${results.length} авто з AutoScout24, Mobile.de, Bytbil та Blocket`
+          }
         </p>
-      </div>
+      </header>
 
-      <div className="rounded-3xl border border-white/[0.06] bg-[#080808]/80 p-6 shadow-2xl backdrop-blur-xl">
-        {!isDone && (
-          <div className="mb-6">
-            <ProgressBar current={step} total={QUESTIONS.length} />
-          </div>
-        )}
+      {/* Filter form */}
+      {phase === "form" && (
+        <div className="mb-6 rounded-3xl border border-white/[0.06] bg-[#080808]/80 p-5 shadow-2xl backdrop-blur-xl sm:p-6">
+          <AllFiltersForm
+            answers={answers}
+            onChange={updateAnswer}
+            freeText={freeText}
+            onFreeTextChange={setFreeText}
+            onSubmit={() => {
+              try { localStorage.setItem("freshAutoSearch", JSON.stringify(answers)) } catch {}
+              fetchSuggestions(answers, freeText)
+            }}
+            loading={loadingSuggestions}
+          />
+        </div>
+      )}
 
-        <AnimatePresence mode="wait">
-          {!isDone ? (
-            <QuestionStep
-              key={`q-${step}`}
-              question={QUESTIONS[step]}
-              answer={answers[step]}
-              onChange={ans => updateAnswer(step, ans)}
-              onNext={goNext}
-              onBack={goBack}
-              isFirst={step === 0}
-              isLast={step === QUESTIONS.length - 1}
-            />
-          ) : (
-            <ResultsScreen
-              key="results"
-              answers={answers}
-              cars={results}
-              loading={loadingResults}
-              onSelectCar={onSelectCar}
-              onReset={reset}
-            />
-          )}
-        </AnimatePresence>
-      </div>
-    </div>
+      {/* Suggestions */}
+      {phase === "suggestions" && (
+        <div className="rounded-3xl border border-white/[0.06] bg-[#080808]/80 p-5 shadow-2xl backdrop-blur-xl sm:p-6">
+          <SuggestionsScreen
+            suggestions={suggestions}
+            loading={loadingSuggestions}
+            onApprove={handleApproveSuggestion}
+            onSearchAll={handleSearchAll}
+            onReset={reset}
+            onBack={goBackToForm}
+            approvedIndices={approvedIndices}
+            searchingIndex={searchingIndex}
+            error={error}
+          />
+        </div>
+      )}
+
+      {/* Results */}
+      {phase === "results" && (
+        <div className="rounded-3xl border border-white/[0.06] bg-[#080808]/80 p-5 shadow-2xl backdrop-blur-xl sm:p-6">
+          <ResultsScreen
+            answers={answers}
+            cars={results}
+            loading={loadingResults}
+            onSelectCar={onSelectCar}
+            onReset={reset}
+            onBack={goBackToForm}
+          />
+        </div>
+      )}
+    </section>
   )
 }

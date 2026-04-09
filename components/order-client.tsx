@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react"
 import { AnimatePresence } from "framer-motion"
-import { CustomOrderPage } from "@/components/unified-picker"
+import UnifiedPicker from "@/components/unified-picker"
 import CarDetailsModal from "@/components/car-details-modal"
 import CheckoutFlow from "@/components/checkout-flow"
 import type { Car } from "@/lib/data"
@@ -49,7 +49,7 @@ export default function OrderClient() {
 
   return (
     <>
-      <CustomOrderPage onSelectCar={handleSelectCar} />
+      <UnifiedPicker onSelectCar={handleSelectCar} />
 
       <AnimatePresence>
         {showModal && selectedCar && (
