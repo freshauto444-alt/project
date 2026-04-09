@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { createClient } from "@/lib/supabase/server"
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Types
@@ -473,6 +474,30 @@ ${prevContext}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  Ensure client_orders record exists before parser saves cars
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function ensureClientOrder(
+  orderId: string,
+  searchParams: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const supabase = createClient()
+    await supabase.from("client_orders").upsert(
+      {
+        id: orderId,
+        client_order_id: orderId,
+        status: "pending",
+        search_params: searchParams,
+      },
+      { onConflict: "id" },
+    )
+  } catch (e) {
+    console.error("[ai-picker] ensureClientOrder error:", e)
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  Parser API call
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -747,6 +772,7 @@ export async function POST(req: Request) {
     clientOrderId,
     loadMore,
     chatPreferences,
+    cacheOnly,
   } = await req.json()
 
   const tags: string[] = []
@@ -754,6 +780,63 @@ export async function POST(req: Request) {
     a.selected?.forEach((s: string) => tags.push(s))
     if (a.custom?.trim()) tags.push(a.custom.trim())
   })
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  CACHE ONLY — after survey, search existing DB results without parser
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  if (cacheOnly) {
+    const base = extractSearchParams(answers ?? [])
+    const chat: ChatPreferences = {
+      pairs: [],
+      fuel: base.fuel, body_type: base.body_type,
+      budget: base.budget_max, budget_min: base.budget_min, budget_max: base.budget_max,
+      color: null, mileage_max: null, mileage_min: null,
+      required_options: [], year_from: base.year_from, year_to: null,
+      transmission: base.transmission, drive: base.drive,
+      displacement_min: base.displacement_min, displacement_max: null,
+      hp_min: base.hp_min, seats_min: base.seats_min,
+      purpose_body_types: base.purpose_body_types,
+    }
+
+    // Query Supabase for existing parsed cars
+    const supabase = createClient()
+    let query = supabase
+      .from("cars")
+      .select("*")
+      .in("source_type", ["parser_hot", "parser_featured", "parser_custom"])
+      .not("image", "is", null)
+      .gte("price", 20000)
+
+    // Apply filters from survey
+    const pairs = chat.pairs.filter(p => p.make)
+    if (pairs.length === 1) {
+      query = query.ilike("make", `%${pairs[0].make}%`)
+      if (pairs[0].model) query = query.ilike("model", `%${pairs[0].model}%`)
+    }
+    if (chat.fuel) query = query.eq("fuel", chat.fuel)
+    if (chat.year_from) query = query.gte("year", chat.year_from)
+    if (chat.budget_max) query = query.lte("price", chat.budget_max)
+    if (chat.budget_min) query = query.gte("price", chat.budget_min)
+
+    const { data } = await query.order("price", { ascending: true }).limit(50)
+    let cachedCars = data ?? []
+
+    // Client-side filtering for fields Supabase can't easily filter
+    cachedCars = filterCarsClientSide(cachedCars, chat)
+
+    const count = cachedCars.length
+    const message = count > 0
+      ? await generateSearchComment(cachedCars, count, chat, tags)
+      : "За вашими параметрами поки немає готових варіантів у каталозі. Напишіть у чат — я запущу пошук по європейських майданчиках і знайду свіжі пропозиції."
+
+    return NextResponse.json({
+      message,
+      searching: false,
+      cars: cachedCars,
+      chatPreferences: chat,
+    })
+  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   //  TRIGGER SEARCH — parse websites
@@ -801,6 +884,7 @@ export async function POST(req: Request) {
     const wantsMore = /більше|ще авто|ще варіант|більше варіант|більше авто|more|знайди ще|шукай ще|мало результат/.test(lastMsg)
     const hasPreviousCars = cars && cars.length > 0
 
+    await ensureClientOrder(orderId, chat as unknown as Record<string, unknown>)
     const result = await triggerParser(answers ?? [], orderId, chat, wantsMore || hasPreviousCars)
     const count = result?.count ?? 0
     const foundCars = result?.cars ?? []
@@ -821,6 +905,7 @@ export async function POST(req: Request) {
 
   if (loadMore && chatPreferences) {
     const orderId = clientOrderId ?? crypto.randomUUID()
+    await ensureClientOrder(orderId, chatPreferences as unknown as Record<string, unknown>)
     const result = await triggerParser(answers ?? [], orderId, chatPreferences, true)
     const count = result?.count ?? 0
     const foundCars = result?.cars ?? []

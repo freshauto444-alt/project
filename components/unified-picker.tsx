@@ -942,8 +942,7 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
         body: JSON.stringify({
           messages: [],
           answers: finalAnswers,
-          triggerSearch: true,
-          clientOrderId: crypto.randomUUID(),
+          cacheOnly: true,
         }),
       })
       const data = await res.json()
