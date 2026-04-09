@@ -222,6 +222,9 @@ ${cachedSummary}
 
     const userMessage = `Параметри клієнта:\n${prefsDesc.join("\n") || "Не вказані конкретні параметри, запропонуй різноманітні варіанти в діапазоні 20000-40000 EUR"}${freeTextNote}`
 
+    console.log("[suggest] preferences:", JSON.stringify(prefs))
+    console.log("[suggest] userMessage:", userMessage)
+
     const raw = await callClaude(systemPrompt, userMessage, 2500)
     const cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim()
 
