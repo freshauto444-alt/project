@@ -619,19 +619,20 @@ function SearchingBanner() {
 // ─── AIChat ─────────────────────────────────────────────────────────────────
 
 function AIChat({
-  answers, cars, onNewCars, onPrefsChange,
+  answers, cars, onNewCars, onPrefsChange, initialPrefs,
 }: {
   answers: Answer[]
   cars: CarType[]
   onNewCars: (cars: CarType[]) => void
   onPrefsChange?: (prefs: any) => void
+  initialPrefs?: any
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
   const [searching, setSearching] = useState(false)
   const [clientOrderId, setClientOrderId] = useState<string | null>(null)
-  const [chatPreferences, setChatPreferences] = useState<any>(null)
+  const [chatPreferences, setChatPreferences] = useState<any>(initialPrefs ?? null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -895,7 +896,7 @@ function ResultCard({ car, onClick, allCars }: { car: CarType; onClick: () => vo
 // ─── ResultsScreen ────────────────────────────────────────────────────────────
 
 function ResultsScreen({
-  answers, cars, loading, onSelectCar, onReset, onBack,
+  answers, cars, loading, onSelectCar, onReset, onBack, initialPrefs,
 }: {
   answers: Answer[]
   cars: CarType[]
@@ -903,10 +904,11 @@ function ResultsScreen({
   onSelectCar: (car: CarType) => void
   onReset: () => void
   onBack: () => void
+  initialPrefs?: any
 }) {
   const [allCars, setAllCars] = useState<CarType[]>(cars)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [chatPrefsRef, setChatPrefsRef] = useState<any>(null)
+  const [chatPrefsRef, setChatPrefsRef] = useState<any>(initialPrefs ?? null)
   useEffect(() => { setAllCars(cars) }, [cars])
   const handleNewCars = useCallback((newCars: CarType[]) => {
     setAllCars(newCars)
@@ -969,7 +971,7 @@ function ResultsScreen({
       </div>
 
       <CriteriaBar answers={answers} onReset={onReset} />
-      <AIChat answers={answers} cars={allCars} onNewCars={handleNewCars} onPrefsChange={setChatPrefsRef} />
+      <AIChat answers={answers} cars={allCars} onNewCars={handleNewCars} onPrefsChange={setChatPrefsRef} initialPrefs={initialPrefs} />
 
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-white">
@@ -1066,6 +1068,7 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
   const [answers, setAnswers] = useState<Answer[]>(EMPTY_ANSWERS)
   const [freeText, setFreeText] = useState("")
   const [results, setResults] = useState<CarType[]>([])
+  const [initialPrefs, setInitialPrefs] = useState<any>(null)
   const [loadingResults, setLoadingResults] = useState(false)
   const [phase, setPhase] = useState<Phase>("form")
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
@@ -1190,6 +1193,23 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
       const data = await res.json()
       const newCars = (data.cars ?? []).map(mapApiCar)
 
+      // Save chatPreferences from suggestion so chat/loadMore inherits make/model
+      const suggestionPrefs = data.chatPreferences ?? {
+        pairs: [{ make: suggestion.searchParams.make, model: suggestion.searchParams.model }],
+        fuel: suggestion.searchParams.fuel ?? null,
+        body_type: suggestion.searchParams.body_type ?? null,
+        budget_min: userBudget.min || suggestion.searchParams.budget_min || 20000,
+        budget_max: userBudget.max || suggestion.searchParams.budget_max || undefined,
+        year_from: suggestion.searchParams.year_from,
+        year_to: suggestion.searchParams.year_to,
+        transmission: suggestion.searchParams.transmission ?? null,
+        drive: suggestion.searchParams.drive ?? null,
+        budget: null, color: null, mileage_max: null, mileage_min: null,
+        required_options: [], displacement_min: null, displacement_max: null,
+        hp_min: null, seats_min: null, purpose_body_types: [],
+      }
+      setInitialPrefs(suggestionPrefs)
+
       setResults(prev => {
         const existingUrls = new Set(prev.map(c => (c as any).sourceUrl || (c as any).source_url))
         const unique = newCars.filter((c: CarType) => !existingUrls.has((c as any).sourceUrl || (c as any).source_url))
@@ -1265,6 +1285,7 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
       })
       const data = await res.json()
       setResults((data.cars ?? []).map(mapApiCar))
+      if (data.chatPreferences) setInitialPrefs(data.chatPreferences)
       if (data.cars?.length === 0) {
         setError("За вашими параметрами авто поки не знайдено. Спробуйте змінити критерії.")
       }
@@ -1364,6 +1385,7 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
             onSelectCar={onSelectCar}
             onReset={reset}
             onBack={goBackToForm}
+            initialPrefs={initialPrefs}
           />
         </div>
       )}
