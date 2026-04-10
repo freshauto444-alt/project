@@ -3,9 +3,10 @@ import { createClient } from "@supabase/supabase-js"
 import { lookupPriceGuide } from "@/lib/constants"
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  AI Car Suggestion Endpoint
-//  Returns 3-5 specific car model suggestions BEFORE any parsing happens.
-//  Uses Claude + cached Supabase data for instant (2-3s) responses.
+//  AI Car Suggestion Endpoint — v2
+//  Strategy: DB-first (real inventory matching user filters exactly).
+//  Claude only fills gaps when DB has < 5 models that match strict constraints.
+//  Price bounds are intersected with user budget so suggestions never exceed it.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface CarSuggestion {
@@ -68,7 +69,7 @@ async function callClaude(
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: maxTokens,
-      temperature: 0.9,
+      temperature: 0.7,
       system: systemPrompt,
       messages: [{ role: "user", content: userMessage }],
     }),
@@ -81,84 +82,97 @@ async function callClaude(
   return data.content?.[0]?.text?.trim() ?? ""
 }
 
+interface DbModelStats {
+  make: string
+  model: string
+  count: number
+  minPrice: number
+  maxPrice: number
+  medianPrice: number
+  minYear: number
+  maxYear: number
+  bodyTypes: Set<string>
+  sampleFuel: string | null
+}
+
+function median(sorted: number[]): number {
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+}
+
 export async function POST(req: Request) {
   try {
     const body: SuggestRequest = await req.json()
     const prefs = body.preferences ?? {}
 
-    // ── Step 1: Build price guide from Supabase ──────────────────────────
-    let priceGuideText = ""
-    let cachedSummary = ""
-    const dynamicPriceGuide = new Map<string, { min: number; max: number; count: number }>()
+    const userMin = prefs.budget_min ?? 0
+    const userMax = prefs.budget_max ?? 999999
+    const bodyTypeFilter = prefs.body_type?.toLowerCase().trim() || null
+
+    // ── Step 1: Query DB with STRICT filters matching user's criteria ────
+    const dbStats = new Map<string, DbModelStats>()
+    let strictMatchCount = 0
 
     try {
       const supabase = createClient(supabaseUrl, supabaseKey)
 
-      const priceGuidePromise = supabase
+      let q = supabase
         .from("cars")
-        .select("make, model, price")
+        .select("make, model, year, price, fuel, body_type")
         .not("price", "is", null)
-        .gt("price", 5000)
-        .lt("price", 500000)
-        .limit(500)
+        .not("make", "is", null)
+        .not("model", "is", null)
 
-      let filteredQuery = supabase
-        .from("cars")
-        .select("make, model, year, price, mileage, fuel, body_type")
-        .gte("price", prefs.budget_min ?? 20000)
-      if (prefs.budget_max) filteredQuery = filteredQuery.lte("price", prefs.budget_max)
-      if (prefs.year_from) filteredQuery = filteredQuery.gte("year", prefs.year_from)
-      if (prefs.fuel) filteredQuery = filteredQuery.eq("fuel", prefs.fuel)
-      if (prefs.body_type) filteredQuery = filteredQuery.eq("body_type", prefs.body_type)
-      const filteredPromise = filteredQuery.limit(50).order("price", { ascending: true })
+      if (userMin > 0) q = q.gte("price", userMin)
+      if (prefs.budget_max) q = q.lte("price", userMax)
+      if (prefs.year_from) q = q.gte("year", prefs.year_from)
+      if (prefs.year_to) q = q.lte("year", prefs.year_to)
+      if (prefs.fuel) q = q.eq("fuel", prefs.fuel)
+      if (prefs.body_type) q = q.eq("body_type", prefs.body_type)
 
-      const [priceResult, filteredResult] = await Promise.all([priceGuidePromise, filteredPromise])
+      const { data: strictData, error: strictErr } = await q.limit(1500)
+      if (strictErr) console.error("[suggest] strict query error:", strictErr)
 
-      // Build dynamic price guide
-      const pricesByModel = new Map<string, number[]>()
-      for (const c of priceResult.data ?? []) {
-        const key = `${c.make} ${c.model}`.toLowerCase()
-        if (!pricesByModel.has(key)) pricesByModel.set(key, [])
-        pricesByModel.get(key)!.push(c.price)
-      }
-      for (const [key, prices] of pricesByModel) {
-        if (prices.length < 2) continue
-        prices.sort((a, b) => a - b)
-        const trimStart = Math.floor(prices.length * 0.1)
-        const trimEnd = Math.max(trimStart + 1, Math.ceil(prices.length * 0.9))
-        const trimmed = prices.slice(trimStart, trimEnd)
-        dynamicPriceGuide.set(key, {
-          min: trimmed[0],
-          max: trimmed[trimmed.length - 1],
-          count: prices.length,
-        })
-      }
+      const rows = strictData ?? []
+      strictMatchCount = rows.length
 
-      if (dynamicPriceGuide.size > 0) {
-        const guideLines = [...dynamicPriceGuide.entries()]
-          .filter(([_, v]) => v.count >= 2)
-          .sort((a, b) => b[1].count - a[1].count)
-          .slice(0, 50)
-          .map(([name, d]) => `${name}: ${d.min}-${d.max} EUR (${d.count} авто)`)
-        priceGuideText = `\n\nРЕАЛЬНІ РИНКОВІ ЦІНИ (з нашої бази):\n${guideLines.join("\n")}`
-      }
-
-      const cached = filteredResult.data ?? []
-      if (cached.length > 0) {
-        const counts: Record<string, { count: number; minPrice: number; maxPrice: number }> = {}
-        for (const c of cached) {
-          const key = `${c.make} ${c.model}`
-          if (!counts[key]) counts[key] = { count: 0, minPrice: Infinity, maxPrice: 0 }
-          counts[key].count++
-          if (c.price < counts[key].minPrice) counts[key].minPrice = c.price
-          if (c.price > counts[key].maxPrice) counts[key].maxPrice = c.price
+      // Group by make+model
+      const grouped = new Map<string, { make: string; model: string; prices: number[]; years: number[]; bodyTypes: Set<string>; fuel: string | null }>()
+      for (const r of rows) {
+        if (!r.make || !r.model || r.price == null) continue
+        const key = `${r.make.toLowerCase()}|${r.model.toLowerCase()}`
+        let g = grouped.get(key)
+        if (!g) {
+          g = { make: r.make, model: r.model, prices: [], years: [], bodyTypes: new Set(), fuel: r.fuel ?? null }
+          grouped.set(key, g)
         }
-        const topModels = Object.entries(counts)
-          .sort((a, b) => b[1].count - a[1].count)
-          .slice(0, 8)
-          .map(([name, d]) => `${name}: ${d.minPrice}-${d.maxPrice} EUR (${d.count} шт)`)
-          .join("\n")
-        cachedSummary = `\n\nДОСТУПНІ ЗАРАЗ В БЮДЖЕТІ КЛІЄНТА:\n${topModels}`
+        g.prices.push(r.price)
+        if (r.year) g.years.push(r.year)
+        if (r.body_type) g.bodyTypes.add(r.body_type)
+      }
+
+      for (const [key, g] of grouped) {
+        if (g.prices.length < 1) continue
+        g.prices.sort((a, b) => a - b)
+        // Trim outliers 10%-90% when we have enough samples
+        let trimmed = g.prices
+        if (g.prices.length >= 5) {
+          const a = Math.floor(g.prices.length * 0.1)
+          const b = Math.max(a + 1, Math.ceil(g.prices.length * 0.9))
+          trimmed = g.prices.slice(a, b)
+        }
+        dbStats.set(key, {
+          make: g.make,
+          model: g.model,
+          count: g.prices.length,
+          minPrice: trimmed[0],
+          maxPrice: trimmed[trimmed.length - 1],
+          medianPrice: median(trimmed),
+          minYear: g.years.length ? Math.min(...g.years) : 0,
+          maxYear: g.years.length ? Math.max(...g.years) : 0,
+          bodyTypes: g.bodyTypes,
+          sampleFuel: g.fuel,
+        })
       }
     } catch (e) {
       console.error("[suggest] Supabase error:", e)
@@ -175,134 +189,214 @@ export async function POST(req: Request) {
     if (prefs.year_to) prefsDesc.push(`Рік до: ${prefs.year_to}`)
     if (prefs.transmission) prefsDesc.push(`КПП: ${prefs.transmission}`)
     if (prefs.drive) prefsDesc.push(`Привід: ${prefs.drive}`)
-    if (prefs.purpose_body_types?.length) prefsDesc.push(`Ціль (кузови): ${prefs.purpose_body_types.join(", ")}`)
-
     const purposes = body.answers?.find(a => a.questionId === "purpose")?.selected ?? []
     if (purposes.length) prefsDesc.push(`Ціль: ${purposes.join(", ")}`)
 
-    // ── Step 3: Ask Claude for suggestions ───────────────────────────────
-    const systemPrompt = `Ти — автоексперт з 15+ років досвіду підбору авто з Європи (Німеччина, Швеція).
+    console.log("[suggest] prefs:", JSON.stringify(prefs))
+    console.log("[suggest] DB strict match count:", strictMatchCount, "unique models:", dbStats.size)
 
-КРИТИЧНІ ПРАВИЛА:
-1. Ціни ТІЛЬКИ в EUR.
-2. Ціни мають бути РЕАЛЬНИМИ — перевіряй чи авто за таку ціну ІСНУЄ на ринку.
-3. ВСІ пропозиції повинні ВМІЩУВАТИСЬ в бюджет клієнта.
-4. Можеш пропонувати БУДЬ-ЯКІ моделі — але ЦІНА ПОВИННА бути реалістичною.
-5. В полі model_display НЕ повторюй марку. Правильно: "3 Series Touring". Неправильно: "BMW 3 Series Touring".
-6. Якщо клієнт вказав конкретні марки чи побажання в додатковому тексті — ОБОВ'ЯЗКОВО включи ці марки в рекомендації (мінімум 2-3 з 5).
-7. Кожен раз пропонуй РІЗНІ конкретні моделі та комплектації. НЕ повторюй одні й ті самі 5 моделей. Будь креативним — пропонуй різні двигуни, покоління, версії.
-
-Клієнт Fresh Auto шукає авто з Європи (Німеччина, Швеція).
-${priceGuideText}
-${cachedSummary}
-
-ЗАДАЧА: Запропонуй РІВНО 5 моделей які ТОЧНО вміщуються в бюджет клієнта.
-
-Для пошукових параметрів (model_search):
-- BMW: "3er", "5er", "x3", "x5". Mercedes: "c-klasse", "e-klasse", "glc". VW: "golf", "passat", "tiguan". Audi: "a4", "a6", "q5". Volvo: "v60", "xc60". Skoda: "octavia", "superb". Toyota: "rav4", "corolla". Porsche: "cayenne", "macan".
-
-Поверни ТІЛЬКИ JSON масив:
-[
-  {
-    "make": "...",
-    "model_display": "повна назва для відображення",
-    "model_search": "модель для пошуку на AS24/Mobile.de",
-    "yearRange": "2020-2023",
-    "priceRange": "25000-32000",
-    "whyRecommended": "2-3 речення українською ЧОМУ ця модель підходить.",
-    "concerns": "1 речення про нюанси/ризики.",
-    "confidence": "high|medium|low"
-  }
-]`
-
-    // Free text from user (e.g. "щось із мерседеса або ауді")
-    const freeTextNote = body.freeText?.trim()
-      ? `\n\nКЛІЄНТ НАПИСАВ ДОДАТКОВО: "${body.freeText.trim()}" — це ПРІОРИТЕТ, обов'язково врахуй це побажання при виборі моделей!`
-      : ""
-
-    const userMessage = `Параметри клієнта:\n${prefsDesc.join("\n") || "Не вказані конкретні параметри, запропонуй різноманітні варіанти в діапазоні 20000-40000 EUR"}${freeTextNote}`
-
-    console.log("[suggest] preferences:", JSON.stringify(prefs))
-    console.log("[suggest] userMessage:", userMessage)
-
-    const raw = await callClaude(systemPrompt, userMessage, 2500)
-    const cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim()
-
-    const jsonMatch = cleaned.match(/\[[\s\S]*\]/)
-    if (!jsonMatch) {
-      console.error("[suggest] No JSON array found:", raw.slice(0, 300))
-      return NextResponse.json({
-        suggestions: [],
-        message: "Не вдалося згенерувати рекомендації. Спробуйте ще раз.",
+    // ── Step 3: Select top DB-backed suggestions ────────────────────────
+    // Rank by: count (popularity) * year recency bonus, and require price fits user window
+    const dbCandidates = [...dbStats.values()]
+      .filter(s => {
+        // Already filtered by query, but re-check intersection
+        return s.minPrice <= userMax && s.maxPrice >= userMin
       })
-    }
-
-    let parsed: any[]
-    try {
-      parsed = JSON.parse(jsonMatch[0])
-      if (!Array.isArray(parsed)) throw new Error("Expected JSON array")
-    } catch (parseErr) {
-      console.error("[suggest] Failed to parse JSON:", parseErr)
-      return NextResponse.json({
-        suggestions: [],
-        message: "AI повернув невалідну відповідь. Спробуйте ще раз.",
+      .sort((a, b) => {
+        // Prefer models with more samples (more inventory = more confidence)
+        if (b.count !== a.count) return b.count - a.count
+        return b.maxYear - a.maxYear
       })
-    }
 
-    const suggestions: CarSuggestion[] = parsed.map((s: any) => {
-      let modelDisplay = s.model_display ?? s.model ?? ""
-      const make = s.make ?? ""
-      if (modelDisplay.toLowerCase().startsWith(make.toLowerCase())) {
-        modelDisplay = modelDisplay.slice(make.length).trim()
-      }
+    // Helper to build a suggestion from DB stats
+    const buildFromDb = (s: DbModelStats): CarSuggestion => {
+      // Intersect with user budget for precise bounds
+      const pmin = Math.max(s.minPrice, userMin)
+      const pmax = Math.min(s.maxPrice, userMax)
+      const yFrom = s.minYear || prefs.year_from || 2018
+      const yTo = s.maxYear || prefs.year_to || undefined
+      const bodyStr = s.bodyTypes.size ? [...s.bodyTypes].join("/") : ""
       return {
-        make,
-        model: modelDisplay,
-        yearRange: s.yearRange ?? "",
-        priceRange: s.priceRange ?? "",
-        whyRecommended: s.whyRecommended ?? "",
-        concerns: s.concerns ?? "",
+        make: s.make,
+        model: s.model,
+        yearRange: yTo ? `${yFrom}-${yTo}` : `${yFrom}`,
+        priceRange: `${Math.round(pmin)}-${Math.round(pmax)}`,
+        whyRecommended: `В нашій базі ${s.count} ${s.count === 1 ? "авто" : "авто"} ${s.make} ${s.model} під ваші критерії${bodyStr ? ` (${bodyStr})` : ""}. Медіанна ціна ~${Math.round(s.medianPrice)} EUR.`,
+        concerns: "Перевірте історію сервісу та комплектацію перед купівлею.",
         searchParams: {
           make: s.make,
-          model: s.model_search ?? s.model ?? "",
-          year_from: (() => { const v = parseInt(String(s.yearRange ?? "").split("-")[0]?.replace(/\D/g, "")); return !isNaN(v) && v > 1990 ? v : prefs.year_from ?? 2018; })(),
-          year_to: (() => { const v = parseInt(String(s.yearRange ?? "").split("-")[1]?.replace(/\D/g, "") ?? ""); return !isNaN(v) && v > 1990 ? v : prefs.year_to ?? undefined; })(),
-          budget_min: (() => { const v = parseInt(String(s.priceRange ?? "").split("-")[0]?.replace(/\D/g, "")); return !isNaN(v) && v > 0 ? v : prefs.budget_min ?? 20000; })(),
-          budget_max: (() => { const v = parseInt(String(s.priceRange ?? "").split("-")[1]?.replace(/\D/g, "") ?? ""); return !isNaN(v) && v > 0 ? v : prefs.budget_max ?? undefined; })(),
+          model: s.model,
+          year_from: yFrom,
+          year_to: yTo,
+          budget_min: Math.round(pmin),
+          budget_max: Math.round(pmax),
           fuel: prefs.fuel || undefined,
           transmission: prefs.transmission || undefined,
           body_type: prefs.body_type || undefined,
           drive: prefs.drive || undefined,
         },
       }
-    })
+    }
 
-    // ── Validate + correct prices ────────────────────────────────────────
-    const userMin = prefs.budget_min ?? 20000
-    const userMax = prefs.budget_max ?? 999999
+    // ── Hybrid mix: take max 2 from DB, let Claude freely propose the rest ──
+    // This way користувач бачить і "реальні з бази", і свіжі AI-рекомендації
+    // (марка/модель/роки/ціна без точної модифікації).
+    const DB_SLOTS = Math.min(2, dbCandidates.length)
+    const suggestions: CarSuggestion[] = dbCandidates.slice(0, DB_SLOTS).map(buildFromDb)
 
-    const corrected = suggestions.map(s => {
-      const dbKey = `${s.make} ${s.model}`.toLowerCase()
-      const dbPrice = dynamicPriceGuide.get(dbKey)
-      const staticPrice = lookupPriceGuide(s.make, s.searchParams.model)
-      const realPrice = (dbPrice && dbPrice.count >= 2) ? dbPrice : staticPrice
+    // ── Step 4: Always ask Claude for fresh suggestions (fills 3-5 slots) ──
+    const needed = 5 - suggestions.length
+    if (needed > 0) {
+      const existingKeys = new Set(suggestions.map(s => `${s.make.toLowerCase()}|${s.model.toLowerCase()}`))
 
-      if (realPrice) {
-        s.priceRange = `${realPrice.min}-${realPrice.max}`
-        s.searchParams.budget_min = realPrice.min
-        s.searchParams.budget_max = realPrice.max
+      // Tell Claude what we already have & strict constraints
+      const existingText = suggestions.length
+        ? `Вже вибрані з бази (НЕ повторюй):\n${suggestions.map(s => `- ${s.make} ${s.model} (${s.priceRange} EUR)`).join("\n")}`
+        : "Наша база не має жодних авто під ці критерії — запропонуй РЕАЛЬНІ моделі які точно продаються в цьому бюджеті."
+
+      const strictConstraints = [
+        userMin > 0 && `Ціна ВІД ${userMin} EUR`,
+        prefs.budget_max && `Ціна ДО ${userMax} EUR`,
+        prefs.body_type && `Тип кузова: ТІЛЬКИ ${prefs.body_type} (SUV/Estate/Sedan/etc — строго)`,
+        prefs.fuel && `Паливо: ТІЛЬКИ ${prefs.fuel}`,
+        prefs.year_from && `Рік ВІД ${prefs.year_from}`,
+        prefs.year_to && `Рік ДО ${prefs.year_to}`,
+      ].filter(Boolean).join("\n")
+
+      const systemPrompt = `Ти — автоексперт з 15+ років підбору авто з Європи (Німеччина, Швеція). Клієнт Fresh Auto.
+
+КРИТИЧНІ ПРАВИЛА:
+1. Запропонуй РІВНО ${needed} ${needed === 1 ? "модель" : "моделі"} які ТОЧНО продаються в бюджеті клієнта.
+2. ВСІ запропоновані моделі ПОВИННІ мати ціновий діапазон ПОВНІСТЮ всередині бюджету клієнта. НЕ виходь за межі.
+3. Для кожної моделі вкажи ВУЗЬКИЙ реалістичний ціновий діапазон (різниця min-max не більше 35% від min). Не "22000-90000" — а "38000-46000".
+4. Тип кузова МУСИТЬ точно відповідати — якщо клієнт вибрав SUV, пропонуй ТІЛЬКИ позашляховики (X3, Q5, GLC, XC60, RAV4, Tucson тощо). Якщо Estate — ТІЛЬКИ універсали.
+5. В model_display НЕ повторюй марку. Правильно: "X3". Неправильно: "BMW X3".
+6. Достатньо вказати марку + модель + діапазон років + діапазон цін. НЕ обов'язково вказувати точну модифікацію двигуна (можеш, якщо впевнений). Це будуть опорні точки для пошуку клієнта.
+7. Різноманітність: пропонуй моделі РІЗНИХ брендів, не 5 BMW поспіль.
+
+СТРОГІ КРИТЕРІЇ КЛІЄНТА:
+${strictConstraints}
+
+${existingText}
+
+Поверни ТІЛЬКИ JSON масив:
+[
+  {
+    "make": "BMW",
+    "model_display": "X3 xDrive20d",
+    "model_search": "x3",
+    "yearRange": "2020-2022",
+    "priceRange": "42000-48000",
+    "whyRecommended": "2-3 речення українською чому ця модель підходить клієнту.",
+    "concerns": "1 речення про нюанси.",
+    "body_type_match": "SUV"
+  }
+]`
+
+      const freeTextNote = body.freeText?.trim()
+        ? `\n\nДОДАТКОВО КЛІЄНТ НАПИСАВ: "${body.freeText.trim()}" — врахуй обов'язково!`
+        : ""
+
+      const userMessage = `Параметри клієнта:\n${prefsDesc.join("\n") || "Не вказані конкретні параметри"}${freeTextNote}\n\nЗапропонуй ${needed} ${needed === 1 ? "модель" : "моделі"}.`
+
+      const raw = await callClaude(systemPrompt, userMessage, 2000)
+      const cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim()
+      const jsonMatch = cleaned.match(/\[[\s\S]*\]/)
+
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0])
+          if (Array.isArray(parsed)) {
+            for (const s of parsed) {
+              let modelDisplay = s.model_display ?? s.model ?? ""
+              const make = s.make ?? ""
+              if (modelDisplay.toLowerCase().startsWith(make.toLowerCase())) {
+                modelDisplay = modelDisplay.slice(make.length).trim()
+              }
+              const key = `${make.toLowerCase()}|${modelDisplay.toLowerCase()}`
+              if (existingKeys.has(key)) continue
+
+              const parseRange = (str: string): [number, number] => {
+                const parts = String(str ?? "").split("-").map(p => parseInt(p.replace(/\D/g, "")))
+                return [parts[0] || 0, parts[1] || 0]
+              }
+              const [claimMin, claimMax] = parseRange(s.priceRange)
+              const [yFrom, yTo] = parseRange(s.yearRange)
+
+              // Intersect with user budget — ignore Claude's range if it exceeds it
+              let finalMin = claimMin && claimMin >= userMin ? claimMin : userMin
+              let finalMax = claimMax && claimMax <= userMax ? claimMax : userMax
+
+              // If the claimed range doesn't overlap with user budget, check static guide and try to fit
+              if (claimMax && claimMax < userMin) {
+                // Claude suggested something below budget — skip
+                continue
+              }
+              if (claimMin && claimMin > userMax) {
+                // Claude suggested something above budget — skip
+                continue
+              }
+
+              // Cross-check with static price guide
+              const staticGuide = lookupPriceGuide(make, s.model_search ?? modelDisplay)
+              if (staticGuide) {
+                // If the entire static range is outside user budget — skip this model
+                if (staticGuide.min > userMax || staticGuide.max < userMin) {
+                  continue
+                }
+                // Tighten bounds to the intersection of static guide and user budget
+                finalMin = Math.max(staticGuide.min, userMin, finalMin)
+                finalMax = Math.min(staticGuide.max, userMax, finalMax || userMax)
+              }
+
+              if (finalMin > finalMax) continue
+
+              suggestions.push({
+                make,
+                model: modelDisplay,
+                yearRange: yTo ? `${yFrom}-${yTo}` : `${yFrom || prefs.year_from || 2018}`,
+                priceRange: `${finalMin}-${finalMax}`,
+                whyRecommended: s.whyRecommended ?? "",
+                concerns: s.concerns ?? "",
+                searchParams: {
+                  make,
+                  model: s.model_search ?? modelDisplay,
+                  year_from: yFrom > 1990 ? yFrom : prefs.year_from ?? 2018,
+                  year_to: yTo > 1990 ? yTo : prefs.year_to ?? undefined,
+                  budget_min: finalMin,
+                  budget_max: finalMax,
+                  fuel: prefs.fuel || undefined,
+                  transmission: prefs.transmission || undefined,
+                  body_type: prefs.body_type || undefined,
+                  drive: prefs.drive || undefined,
+                },
+              })
+              existingKeys.add(key)
+              if (suggestions.length >= 5) break
+            }
+          }
+        } catch (err) {
+          console.error("[suggest] Claude JSON parse error:", err)
+        }
       }
-      return s
-    }).filter(s => {
-      const modelMin = s.searchParams.budget_min ?? 0
-      return modelMin <= userMax * 1.15
-    })
+    }
+
+    // ── Step 5: Final hard filter — no suggestion can exceed user budget ─
+    const final = suggestions
+      .filter(s => {
+        const min = s.searchParams.budget_min ?? 0
+        const max = s.searchParams.budget_max ?? 999999
+        return min <= userMax && max >= userMin
+      })
+      .slice(0, 5)
+
+    console.log("[suggest] returning", final.length, "suggestions (DB:", dbCandidates.slice(0, 5).length, ", AI fill:", final.length - Math.min(5, dbCandidates.length), ")")
 
     return NextResponse.json({
-      suggestions: corrected.slice(0, 5),
-      cachedCount: 0,
-      message: corrected.length === 0
-        ? "Не знайдено рекомендацій за цими параметрами. Спробуйте розширити бюджет або змінити тип палива."
+      suggestions: final,
+      cachedCount: strictMatchCount,
+      message: final.length === 0
+        ? "Не знайдено рекомендацій під ці критерії. Спробуйте розширити бюджет або змінити фільтри."
         : undefined,
     })
   } catch (e) {
