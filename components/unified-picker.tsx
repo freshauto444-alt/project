@@ -1219,14 +1219,12 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
       }
       setInitialPrefs(suggestionPrefs)
 
-      setResults(prev => {
-        const existingUrls = new Set(prev.map(c => (c as any).sourceUrl || (c as any).source_url))
-        const unique = newCars.filter((c: CarType) => !existingUrls.has((c as any).sourceUrl || (c as any).source_url))
-        return [...prev, ...unique]
-      })
-
+      // Replace results instead of merging: switching from one suggestion (A6)
+      // to another (A5) must not keep stale cars from the previous search.
+      // Merging only makes sense when user asks "load more" within the same context.
       if (newCars.length > 0) {
-        setApprovedIndices(prev => new Set(prev).add(idx))
+        setResults(newCars)
+        setApprovedIndices(new Set([idx]))
         setPhase("results")
         setLoadingResults(false)
       } else {
