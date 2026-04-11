@@ -95,9 +95,80 @@ interface DbModelStats {
   sampleFuel: string | null
 }
 
+// Strip trim/variant suffixes so the parser can find the base model.
+// AS24/Bytbil expect slugs like "passat", not "passat alltrack".
+// Display name keeps the full variant; only the SEARCH model is normalized.
+const TRIM_SUFFIXES = [
+  "alltrack", "combi", "kombi", "estate", "touring", "variant", "avant",
+  "country tourer", "tourer", "sportback", "shooting brake", "cross country",
+  "crosstourer", "allroad", "scout", "wagon", "sw", "break",
+  "xdrive", "4motion", "4matic", "quattro",
+]
+
+function normalizeModelForSearch(model: string): string {
+  let m = (model || "").toLowerCase().trim()
+  if (!m) return m
+  // Remove trim suffixes (longest first to catch multi-word variants)
+  const sorted = [...TRIM_SUFFIXES].sort((a, b) => b.length - a.length)
+  for (const s of sorted) {
+    const re = new RegExp(`\\b${s}\\b`, "gi")
+    m = m.replace(re, "").trim()
+  }
+  // Collapse whitespace
+  m = m.replace(/\s+/g, " ").trim()
+  // If we stripped everything, fall back to the first token of the original
+  if (!m) m = (model || "").toLowerCase().split(/\s+/)[0] ?? ""
+  return m
+}
+
 function median(sorted: number[]): number {
   const mid = Math.floor(sorted.length / 2)
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+}
+
+// Extract brand hints from user's freeText (both UA and EN variants).
+// Returns canonical brand names as stored in `cars.make` column.
+const BRAND_ALIASES: Record<string, string[]> = {
+  "BMW": ["bmw", "бмв", "беха"],
+  "Audi": ["audi", "ауді", "ауди"],
+  "Mercedes-Benz": ["mercedes", "мерседес", "мерс", "benz", "бенц"],
+  "Volkswagen": ["volkswagen", "vw", "фольксваген", "фольц", "фольк", "пасат", "passat"],
+  "Volvo": ["volvo", "вольво"],
+  "Skoda": ["skoda", "škoda", "шкода"],
+  "Toyota": ["toyota", "тойота"],
+  "Porsche": ["porsche", "порше"],
+  "Seat": ["seat", "сеат"],
+  "Opel": ["opel", "опель"],
+  "Peugeot": ["peugeot", "пежо"],
+  "Renault": ["renault", "рено"],
+  "Ford": ["ford", "форд"],
+  "Mazda": ["mazda", "мазда"],
+  "Hyundai": ["hyundai", "хундай", "хюндай"],
+  "Kia": ["kia", "кіа", "киа"],
+  "Nissan": ["nissan", "ніссан", "нисан"],
+  "Lexus": ["lexus", "лексус"],
+  "Land Rover": ["land rover", "range rover", "ленд ровер", "ренж ровер"],
+  "Jaguar": ["jaguar", "ягуар"],
+  "Mini": ["mini cooper", "міні"],
+  "Tesla": ["tesla", "тесла"],
+  "Alfa Romeo": ["alfa", "альфа"],
+  "Dacia": ["dacia", "дачія"],
+  "Subaru": ["subaru", "субару"],
+}
+
+function extractBrandHints(freeText?: string): string[] {
+  if (!freeText) return []
+  const text = freeText.toLowerCase()
+  const hits = new Set<string>()
+  for (const [brand, aliases] of Object.entries(BRAND_ALIASES)) {
+    for (const alias of aliases) {
+      if (text.includes(alias)) {
+        hits.add(brand)
+        break
+      }
+    }
+  }
+  return [...hits]
 }
 
 export async function POST(req: Request) {
@@ -108,6 +179,10 @@ export async function POST(req: Request) {
     const userMin = prefs.budget_min ?? 0
     const userMax = prefs.budget_max ?? 999999
     const bodyTypeFilter = prefs.body_type?.toLowerCase().trim() || null
+
+    // Extract brand hints from freeText (e.g. "щось із ауді або бмв" → ["Audi", "BMW"])
+    const brandHints = extractBrandHints(body.freeText)
+    console.log("[suggest] brand hints from freeText:", brandHints)
 
     // ── Step 1: Query DB with STRICT filters matching user's criteria ────
     const dbStats = new Map<string, DbModelStats>()
@@ -129,6 +204,7 @@ export async function POST(req: Request) {
       if (prefs.year_to) q = q.lte("year", prefs.year_to)
       if (prefs.fuel) q = q.eq("fuel", prefs.fuel)
       if (prefs.body_type) q = q.eq("body_type", prefs.body_type)
+      if (brandHints.length > 0) q = q.in("make", brandHints)
 
       const { data: strictData, error: strictErr } = await q.limit(1500)
       if (strictErr) console.error("[suggest] strict query error:", strictErr)
@@ -225,7 +301,7 @@ export async function POST(req: Request) {
         concerns: "Перевірте історію сервісу та комплектацію перед купівлею.",
         searchParams: {
           make: s.make,
-          model: s.model,
+          model: normalizeModelForSearch(s.model),
           year_from: yFrom,
           year_to: yTo,
           budget_min: Math.round(pmin),
@@ -239,10 +315,16 @@ export async function POST(req: Request) {
     }
 
     // ── Hybrid mix: take max 2 from DB, let Claude freely propose the rest ──
-    // This way користувач бачить і "реальні з бази", і свіжі AI-рекомендації
-    // (марка/модель/роки/ціна без точної модифікації).
-    const DB_SLOTS = Math.min(2, dbCandidates.length)
-    const suggestions: CarSuggestion[] = dbCandidates.slice(0, DB_SLOTS).map(buildFromDb)
+    // Shuffle top-N DB candidates so repeated calls don't return identical list.
+    const topN = Math.min(8, dbCandidates.length)
+    const topPool = dbCandidates.slice(0, topN)
+    // Fisher-Yates shuffle
+    for (let i = topPool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[topPool[i], topPool[j]] = [topPool[j], topPool[i]]
+    }
+    const DB_SLOTS = Math.min(2, topPool.length)
+    const suggestions: CarSuggestion[] = topPool.slice(0, DB_SLOTS).map(buildFromDb)
 
     // ── Step 4: Always ask Claude for fresh suggestions (fills 3-5 slots) ──
     const needed = 5 - suggestions.length
@@ -261,7 +343,12 @@ export async function POST(req: Request) {
         prefs.fuel && `Паливо: ТІЛЬКИ ${prefs.fuel}`,
         prefs.year_from && `Рік ВІД ${prefs.year_from}`,
         prefs.year_to && `Рік ДО ${prefs.year_to}`,
+        brandHints.length > 0 && `МАРКИ: ТІЛЬКИ ${brandHints.join(" АБО ")} — клієнт прямо просив саме ці бренди, НЕ пропонуй інші!`,
       ].filter(Boolean).join("\n")
+
+      // Nonce for variety: same params + different nonce should give different models
+      const nonce = Math.random().toString(36).slice(2, 8)
+      const varietyHint = `\n\nВАРІАНТ #${nonce} — запропонуй нові моделі які ще НЕ згадувалися, будь креативним, пропонуй менш очевидні варіанти.`
 
       const systemPrompt = `Ти — автоексперт з 15+ років підбору авто з Європи (Німеччина, Швеція). Клієнт Fresh Auto.
 
@@ -269,10 +356,24 @@ export async function POST(req: Request) {
 1. Запропонуй РІВНО ${needed} ${needed === 1 ? "модель" : "моделі"} які ТОЧНО продаються в бюджеті клієнта.
 2. ВСІ запропоновані моделі ПОВИННІ мати ціновий діапазон ПОВНІСТЮ всередині бюджету клієнта. НЕ виходь за межі.
 3. Для кожної моделі вкажи ВУЗЬКИЙ реалістичний ціновий діапазон (різниця min-max не більше 35% від min). Не "22000-90000" — а "38000-46000".
-4. Тип кузова МУСИТЬ точно відповідати — якщо клієнт вибрав SUV, пропонуй ТІЛЬКИ позашляховики (X3, Q5, GLC, XC60, RAV4, Tucson тощо). Якщо Estate — ТІЛЬКИ універсали.
-5. В model_display НЕ повторюй марку. Правильно: "X3". Неправильно: "BMW X3".
-6. Достатньо вказати марку + модель + діапазон років + діапазон цін. НЕ обов'язково вказувати точну модифікацію двигуна (можеш, якщо впевнений). Це будуть опорні точки для пошуку клієнта.
-7. Різноманітність: пропонуй моделі РІЗНИХ брендів, не 5 BMW поспіль.
+4. Тип кузова МУСИТЬ точно відповідати:
+   - SUV/позашляховик: ТІЛЬКИ X1/X3/X5, Q3/Q5/Q7, GLC/GLE, XC40/XC60/XC90, Tiguan/Touareg, RAV4, Tucson/Santa Fe, Tarraco/Ateca, Kodiaq, CX-5, 3008/5008
+   - Estate/універсал: ТІЛЬКИ Passat Variant, Octavia Combi, A4/A6 Avant, 3er/5er Touring, E-Class Estate, V60/V90, Golf Variant, Superb Combi, Insignia Sports Tourer (НЕ Alltrack, НЕ Cross Country — це кросовер-універсали)
+   - Sedan: седани
+   НЕ плутай! Якщо сумніваєшся чи модель універсал чи SUV — НЕ пропонуй її.
+5. В model_display НЕ повторюй марку. Правильно: "Passat Alltrack". Неправильно: "VW Passat Alltrack".
+6. КРИТИЧНО — model_search має бути БАЗОВОЮ назвою моделі БЕЗ суфіксів комплектацій/кузова. Приклади:
+   - "Passat Alltrack" → model_search: "passat"
+   - "Superb Combi" → model_search: "superb"
+   - "Insignia Country Tourer" → model_search: "insignia"
+   - "A6 Avant" → model_search: "a6"
+   - "3 Series Touring" → model_search: "3er"
+   - "E-Class Estate" → model_search: "e-klasse"
+   - "XC60 Cross Country" → model_search: "xc60"
+   - "Octavia Combi" → model_search: "octavia"
+   Універсальне правило: для пошуку використовуй slug як на AS24/Mobile.de (всі букви малі, без пробілів, без варіантів).
+7. Достатньо вказати марку + модель + діапазон років + діапазон цін. НЕ обов'язково вказувати точну модифікацію двигуна.
+8. Різноманітність: пропонуй моделі РІЗНИХ брендів, не 5 BMW поспіль.
 
 СТРОГІ КРИТЕРІЇ КЛІЄНТА:
 ${strictConstraints}
@@ -297,7 +398,7 @@ ${existingText}
         ? `\n\nДОДАТКОВО КЛІЄНТ НАПИСАВ: "${body.freeText.trim()}" — врахуй обов'язково!`
         : ""
 
-      const userMessage = `Параметри клієнта:\n${prefsDesc.join("\n") || "Не вказані конкретні параметри"}${freeTextNote}\n\nЗапропонуй ${needed} ${needed === 1 ? "модель" : "моделі"}.`
+      const userMessage = `Параметри клієнта:\n${prefsDesc.join("\n") || "Не вказані конкретні параметри"}${freeTextNote}${varietyHint}\n\nЗапропонуй ${needed} ${needed === 1 ? "модель" : "моделі"}.`
 
       const raw = await callClaude(systemPrompt, userMessage, 2000)
       const cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim()
@@ -360,7 +461,7 @@ ${existingText}
                 concerns: s.concerns ?? "",
                 searchParams: {
                   make,
-                  model: s.model_search ?? modelDisplay,
+                  model: normalizeModelForSearch(s.model_search ?? modelDisplay),
                   year_from: yFrom > 1990 ? yFrom : prefs.year_from ?? 2018,
                   year_to: yTo > 1990 ? yTo : prefs.year_to ?? undefined,
                   budget_min: finalMin,

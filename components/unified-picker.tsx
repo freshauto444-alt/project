@@ -1177,7 +1177,9 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
           chatPreferences: {
             pairs: [{ make: suggestion.searchParams.make, model: suggestion.searchParams.model }],
             fuel: suggestion.searchParams.fuel ?? null,
-            body_type: suggestion.searchParams.body_type ?? null,
+            // Drop body_type: specific make+model is enough, and body_type may mismatch
+            // (e.g. user asked Estate but AI suggested Tarraco which is SUV)
+            body_type: null,
             budget_min: userBudget.min || suggestion.searchParams.budget_min || 20000,
             budget_max: userBudget.max || suggestion.searchParams.budget_max || undefined,
             year_from: suggestion.searchParams.year_from,
@@ -1197,7 +1199,7 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
       const suggestionPrefs = data.chatPreferences ?? {
         pairs: [{ make: suggestion.searchParams.make, model: suggestion.searchParams.model }],
         fuel: suggestion.searchParams.fuel ?? null,
-        body_type: suggestion.searchParams.body_type ?? null,
+        body_type: null,
         budget_min: userBudget.min || suggestion.searchParams.budget_min || 20000,
         budget_max: userBudget.max || suggestion.searchParams.budget_max || undefined,
         year_from: suggestion.searchParams.year_from,
