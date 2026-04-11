@@ -19,6 +19,9 @@ interface CarSuggestion {
   searchParams: {
     make: string
     model: string
+    // Variant hint: for BMW "540d" when model is "5er", for Mercedes "C220d" when model is "c-klasse".
+    // Used for client-side filtering since AS24 only supports series-level model slugs.
+    model_variant?: string
     year_from: number
     year_to?: number
     budget_min?: number
@@ -102,21 +105,107 @@ const TRIM_SUFFIXES = [
   "alltrack", "combi", "kombi", "estate", "touring", "variant", "avant",
   "country tourer", "tourer", "sportback", "shooting brake", "cross country",
   "crosstourer", "allroad", "scout", "wagon", "sw", "break",
-  "xdrive", "4motion", "4matic", "quattro",
+  "xdrive", "4motion", "4matic", "quattro", "sedan", "saloon",
+  "gran coupe", "gran turismo", "coupe", "cabrio", "cabriolet", "convertible",
+  "hatchback", "limousine", "li", "active tourer", "gran tourer",
 ]
 
-function normalizeModelForSearch(model: string): string {
+// Brand-specific: engine variant → base model series slug used on AS24.
+// BMW: 320d/330i/318i/M340i → 3er, 418d/420i → 4er, 520d/540d/M550i → 5er, etc.
+// Mercedes: C200/C220d/C43 → c-klasse, E220d → e-klasse, etc.
+function normalizeBmwModel(m: string): string | null {
+  // Match "320d", "m340i", "540 d", "m5 cs" etc. Extract leading digit of the series.
+  const match = m.match(/^(?:m\s*)?(\d)(\d{0,2})\s*[a-z]?/i)
+  if (match) {
+    const series = match[1]
+    // BMW M-series keep as is: m2, m3, m4, m5, m8
+    if (/^m\s*\d$/i.test(m) || /^m(2|3|4|5|8)\b/i.test(m)) {
+      const mMatch = m.match(/^m\s*(\d)/i)
+      return mMatch ? `m${mMatch[1]}` : null
+    }
+    return `${series}er`
+  }
+  // X1/X3/X5/X6/X7, Z4, iX, i4, i7, i8 — keep first token
+  const xMatch = m.match(/^(x\d|z\d|i\d|ix)/i)
+  if (xMatch) return xMatch[1].toLowerCase()
+  return null
+}
+
+function normalizeMercedesModel(m: string): string | null {
+  // "C200", "C220d", "C43 amg", "E220d" → "c-klasse" / "e-klasse"
+  const cls = m.match(/^([a-z])\s*\d/i)
+  if (cls) {
+    const letter = cls[1].toLowerCase()
+    if ("acegs".includes(letter)) return `${letter}-klasse`
+  }
+  // CLA, CLS, CLK
+  const cl = m.match(/^(cla|cls|clk|glc|gle|gls|gla|glb|glk|amg gt|amg)/i)
+  if (cl) return cl[1].toLowerCase().replace(" ", "-")
+  return null
+}
+
+function normalizeAudiModel(m: string): string | null {
+  // "A4 Avant", "A6 45 TFSI", "Q5 Sportback" → a4, a6, q5
+  const match = m.match(/^(a\d|q\d|rs\d|s\d|e-tron|tt|r8)/i)
+  return match ? match[1].toLowerCase() : null
+}
+
+// Extract an engine-variant hint from a model display name.
+// BMW "540d xDrive" → "540"; "M340i" → "m340"; "320d Sedan" → "320"
+// Mercedes "C220d" → "c220"; "E350" → "e350"
+// Audi "A6 45 TFSI" → "a6 45" (keeps the power number)
+// Returns lowercase string, or empty if no variant detected.
+function extractVariant(model: string, make?: string): string {
+  const m = (model || "").toLowerCase().trim()
+  if (!m) return ""
+  const brand = (make || "").toLowerCase()
+
+  if (brand.includes("bmw")) {
+    // 320d, 330i, 540d, M340i, M5 Competition
+    const mMatch = m.match(/^m\s*(\d{1,3})/i)
+    if (mMatch) return `m${mMatch[1]}`
+    const numMatch = m.match(/^(\d{3})\s*[a-z]?/)
+    if (numMatch) return numMatch[1]
+    return ""
+  }
+
+  if (brand.includes("mercedes") || brand.includes("benz")) {
+    // C220d, E350, GLC 300, CLA 200
+    const letterNum = m.match(/^([a-z]{1,3})\s*(\d{2,3})/i)
+    if (letterNum) return `${letterNum[1]}${letterNum[2]}`
+    return ""
+  }
+
+  // No specific variant extraction for other brands (Audi A4, VW Passat etc. already slug-level)
+  return ""
+}
+
+function normalizeModelForSearch(model: string, make?: string): string {
   let m = (model || "").toLowerCase().trim()
   if (!m) return m
-  // Remove trim suffixes (longest first to catch multi-word variants)
+
+  // Brand-specific shortcuts — try these first
+  const brand = (make || "").toLowerCase()
+  if (brand.includes("bmw")) {
+    const bmw = normalizeBmwModel(m)
+    if (bmw) return bmw
+  } else if (brand.includes("mercedes") || brand.includes("benz")) {
+    const mb = normalizeMercedesModel(m)
+    if (mb) return mb
+  } else if (brand.includes("audi")) {
+    const au = normalizeAudiModel(m)
+    if (au) return au
+  }
+
+  // Generic suffix stripping
   const sorted = [...TRIM_SUFFIXES].sort((a, b) => b.length - a.length)
   for (const s of sorted) {
     const re = new RegExp(`\\b${s}\\b`, "gi")
     m = m.replace(re, "").trim()
   }
-  // Collapse whitespace
+  // Drop trailing engine tags like "45 tfsi", "220 d", "2.0 tdi", "e-hybrid"
+  m = m.replace(/\b\d+(\.\d)?\s*(tfsi|tdi|tsi|fsi|cdi|bluetec|hdi|dci|hybrid|e-hybrid|phev|mhev|d|i|t)\b/gi, "")
   m = m.replace(/\s+/g, " ").trim()
-  // If we stripped everything, fall back to the first token of the original
   if (!m) m = (model || "").toLowerCase().split(/\s+/)[0] ?? ""
   return m
 }
@@ -124,6 +213,109 @@ function normalizeModelForSearch(model: string): string {
 function median(sorted: number[]): number {
   const mid = Math.floor(sorted.length / 2)
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+}
+
+// ── Body type compatibility: does this model exist in the requested body? ──
+// Key = make:model_slug, value = set of supported body types.
+// Used to reject AI suggestions where Claude hallucinates Estate/SUV variants
+// that don't actually exist (e.g. "Seat Tarraco Estate" — Tarraco is SUV-only).
+//
+// For models NOT in this list, we trust the AI (no filter).
+// Normalized keys use the same slug as normalizeModelForSearch.
+const MODEL_BODY_TYPES: Record<string, Set<string>> = {
+  // SUV-only — no Estate version exists
+  "seat:tarraco": new Set(["SUV"]),
+  "seat:ateca": new Set(["SUV"]),
+  "seat:arona": new Set(["SUV"]),
+  "volkswagen:tiguan": new Set(["SUV"]),
+  "volkswagen:touareg": new Set(["SUV"]),
+  "volkswagen:t-roc": new Set(["SUV"]),
+  "volkswagen:t-cross": new Set(["SUV"]),
+  "volkswagen:id.4": new Set(["SUV"]),
+  "skoda:kodiaq": new Set(["SUV"]),
+  "skoda:karoq": new Set(["SUV"]),
+  "skoda:kamiq": new Set(["SUV"]),
+  "toyota:rav4": new Set(["SUV"]),
+  "toyota:c-hr": new Set(["SUV"]),
+  "toyota:land cruiser": new Set(["SUV"]),
+  "hyundai:tucson": new Set(["SUV"]),
+  "hyundai:santa fe": new Set(["SUV"]),
+  "hyundai:kona": new Set(["SUV"]),
+  "kia:sportage": new Set(["SUV"]),
+  "kia:sorento": new Set(["SUV"]),
+  "mazda:cx-5": new Set(["SUV"]),
+  "mazda:cx-30": new Set(["SUV"]),
+  "nissan:qashqai": new Set(["SUV"]),
+  "nissan:x-trail": new Set(["SUV"]),
+  "peugeot:3008": new Set(["SUV"]),
+  "peugeot:5008": new Set(["SUV"]),
+  "peugeot:2008": new Set(["SUV"]),
+  "ford:kuga": new Set(["SUV"]),
+  "ford:puma": new Set(["SUV"]),
+  "ford:explorer": new Set(["SUV"]),
+  "bmw:x1": new Set(["SUV"]),
+  "bmw:x2": new Set(["SUV"]),
+  "bmw:x3": new Set(["SUV"]),
+  "bmw:x4": new Set(["SUV"]),
+  "bmw:x5": new Set(["SUV"]),
+  "bmw:x6": new Set(["SUV"]),
+  "bmw:x7": new Set(["SUV"]),
+  "bmw:ix": new Set(["SUV"]),
+  "audi:q2": new Set(["SUV"]),
+  "audi:q3": new Set(["SUV"]),
+  "audi:q4": new Set(["SUV"]),
+  "audi:q5": new Set(["SUV"]),
+  "audi:q7": new Set(["SUV"]),
+  "audi:q8": new Set(["SUV"]),
+  "mercedes-benz:glc": new Set(["SUV"]),
+  "mercedes-benz:gle": new Set(["SUV"]),
+  "mercedes-benz:gls": new Set(["SUV"]),
+  "mercedes-benz:gla": new Set(["SUV"]),
+  "mercedes-benz:glb": new Set(["SUV"]),
+  "volvo:xc40": new Set(["SUV"]),
+  "volvo:xc60": new Set(["SUV"]),
+  "volvo:xc90": new Set(["SUV"]),
+  "porsche:cayenne": new Set(["SUV"]),
+  "porsche:macan": new Set(["SUV"]),
+  "land rover:discovery": new Set(["SUV"]),
+  "land rover:defender": new Set(["SUV"]),
+  "land rover:range rover": new Set(["SUV"]),
+  "jaguar:f-pace": new Set(["SUV"]),
+  "jaguar:e-pace": new Set(["SUV"]),
+  "lexus:nx": new Set(["SUV"]),
+  "lexus:rx": new Set(["SUV"]),
+  "tesla:model y": new Set(["SUV"]),
+  "tesla:model x": new Set(["SUV"]),
+  "dacia:duster": new Set(["SUV"]),
+  "mini:countryman": new Set(["SUV"]),
+  // Estate/Sedan capable (no SUV)
+  "bmw:3er": new Set(["Sedan", "Estate"]),
+  "bmw:5er": new Set(["Sedan", "Estate"]),
+  "audi:a4": new Set(["Sedan", "Estate"]),
+  "audi:a6": new Set(["Sedan", "Estate"]),
+  "mercedes-benz:c-klasse": new Set(["Sedan", "Estate"]),
+  "mercedes-benz:e-klasse": new Set(["Sedan", "Estate"]),
+  "volkswagen:passat": new Set(["Sedan", "Estate"]),
+  "volkswagen:arteon": new Set(["Sedan", "Estate"]),
+  "skoda:octavia": new Set(["Sedan", "Estate"]),
+  "skoda:superb": new Set(["Sedan", "Estate"]),
+  "skoda:fabia": new Set(["Hatchback", "Estate"]),
+  "volvo:v60": new Set(["Estate"]),
+  "volvo:v90": new Set(["Estate"]),
+  "volvo:s60": new Set(["Sedan"]),
+  "volvo:s90": new Set(["Sedan"]),
+  "opel:insignia": new Set(["Sedan", "Estate"]),
+  "opel:astra": new Set(["Hatchback", "Estate"]),
+  "peugeot:508": new Set(["Sedan", "Estate"]),
+  "ford:focus": new Set(["Hatchback", "Estate"]),
+  "ford:mondeo": new Set(["Sedan", "Estate"]),
+}
+
+function bodyTypeMatches(make: string, modelSlug: string, requestedBody: string): boolean {
+  const key = `${make.toLowerCase()}:${modelSlug.toLowerCase()}`
+  const known = MODEL_BODY_TYPES[key]
+  if (!known) return true // unknown model — trust AI
+  return known.has(requestedBody)
 }
 
 // Extract brand hints from user's freeText (both UA and EN variants).
@@ -301,7 +493,8 @@ export async function POST(req: Request) {
         concerns: "Перевірте історію сервісу та комплектацію перед купівлею.",
         searchParams: {
           make: s.make,
-          model: normalizeModelForSearch(s.model),
+          model: normalizeModelForSearch(s.model, s.make),
+          model_variant: extractVariant(s.model, s.make) || undefined,
           year_from: yFrom,
           year_to: yTo,
           budget_min: Math.round(pmin),
@@ -461,7 +654,8 @@ ${existingText}
                 concerns: s.concerns ?? "",
                 searchParams: {
                   make,
-                  model: normalizeModelForSearch(s.model_search ?? modelDisplay),
+                  model: normalizeModelForSearch(s.model_search ?? modelDisplay, make),
+                  model_variant: extractVariant(modelDisplay, make) || undefined,
                   year_from: yFrom > 1990 ? yFrom : prefs.year_from ?? 2018,
                   year_to: yTo > 1990 ? yTo : prefs.year_to ?? undefined,
                   budget_min: finalMin,
@@ -487,7 +681,17 @@ ${existingText}
       .filter(s => {
         const min = s.searchParams.budget_min ?? 0
         const max = s.searchParams.budget_max ?? 999999
-        return min <= userMax && max >= userMin
+        if (!(min <= userMax && max >= userMin)) return false
+
+        // Body type sanity check — reject AI hallucinations like "Tarraco Estate"
+        if (prefs.body_type) {
+          const ok = bodyTypeMatches(s.make, s.searchParams.model, prefs.body_type)
+          if (!ok) {
+            console.log("[suggest] body_type rejected:", s.make, s.model, "→ needs", prefs.body_type)
+            return false
+          }
+        }
+        return true
       })
       .slice(0, 5)
 

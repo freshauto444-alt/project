@@ -19,6 +19,9 @@ interface Answer {
 interface CarPair {
   make: string | null
   model: string | null
+  // Optional engine-variant hint used for post-filtering parser results.
+  // BMW "540" when model="5er" — AS24 only supports series-level search slugs.
+  variant?: string | null
 }
 
 interface ChatPreferences {
@@ -618,26 +621,53 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
       .filter(p => p.model)
       .map(p => p.model!.toLowerCase())
     
+    // Variant filter first — if any pair has a variant hint, require exact variant match
+    const variantsRequested = prefs.pairs
+      .filter(p => p.variant)
+      .map(p => p.variant!.toLowerCase())
+    if (variantsRequested.length > 0) {
+      filtered = filtered.filter(c => {
+        const carModel = (c.model ?? "").toLowerCase().replace(/\s+/g, "")
+        return variantsRequested.some(v => {
+          // BMW "540" must match "540d", "540i", "540d xdrive" but NOT "520d" / "440i"
+          // Mercedes "c220" must match "c220d", "c220" but NOT "c200"
+          const escaped = v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+          return new RegExp(`(^|[^\\d])${escaped}([^\\d]|$)`).test(carModel)
+        })
+      })
+    }
+
     if (modelsRequested.length > 0) {
       filtered = filtered.filter(c => {
         const carModel = (c.model ?? "").toLowerCase()
-        const carMake = (c.make ?? "").toLowerCase()
-        // Match if car model contains any of the requested models
-        // "5 Series" matches "520d", "530i", "5 Series"
-        // "A4" matches "A4", "A4 Avant"
         return modelsRequested.some(reqModel => {
-          const reqParts = reqModel.split(/\s+/)
-          const reqCore = reqParts[0] // "5" from "5 Series", "m5" from "m5"
           const escaped = reqModel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-
-          // Word-boundary match: "m5" must NOT match "m50", "m50d", etc.
           if (new RegExp(`\\b${escaped}\\b`).test(carModel)) return true
 
-          // BMW numeric series: "5 series" matches "520d", "530i", "5er", etc.
-          if (reqCore.match(/^\d+$/) && (
-            carModel.match(new RegExp(`^${reqCore}[\\s\\d]`)) ||
-            carModel === reqCore
-          )) return true
+          // BMW: "3er" / "3 series" / "3" all match "320d", "330i", "3 series", "3er"
+          const bmwMatch = reqModel.match(/^(\d)(?:er|\s*series)?$/)
+          if (bmwMatch) {
+            const digit = bmwMatch[1]
+            if (
+              carModel.startsWith(digit) && /^\d/.test(carModel) ||
+              carModel.startsWith(`${digit}er`) ||
+              carModel.startsWith(`${digit} series`) ||
+              new RegExp(`^${digit}\\d{2}[a-z]?\\b`).test(carModel)
+            ) return true
+          }
+
+          // Mercedes: "c-klasse" / "c klasse" / "c class" → "c200", "c220d", "c-class"
+          const mbMatch = reqModel.match(/^([a-z])[\s-]?(klasse|class)$/)
+          if (mbMatch) {
+            const letter = mbMatch[1]
+            if (
+              new RegExp(`^${letter}\\d`).test(carModel) ||
+              carModel.startsWith(`${letter}-klasse`) ||
+              carModel.startsWith(`${letter} klasse`) ||
+              carModel.startsWith(`${letter}-class`) ||
+              carModel.startsWith(`${letter} class`)
+            ) return true
+          }
 
           return false
         })
