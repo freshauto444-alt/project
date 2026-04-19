@@ -677,17 +677,32 @@ async function triggerParser(
 
   const pairs: CarPair[] = chat.pairs.length > 0 ? chat.pairs : [{ make: null, model: null }]
 
-  // Use instant search (cache + singleflight) for each pair
+  // Use instant search (cache + singleflight) for each pair.
+  // Fallback cascade: if 0 results, relax body_type (SUV-coupes are SUVs on AS24/Mobile.de),
+  // then drive, to avoid empty results from overly strict filter combos.
   const limitedPairs = pairs.slice(0, 3)
-  const results = await Promise.all(
-    limitedPairs.map(async (p) => {
-      // Try instant first (fastest path)
-      const instantResult = await callParserInstant({ ...commonPayload, make: p.make, model: p.model })
-      if (instantResult && instantResult.count > 0) return instantResult
-      // Fallback to full callParser
-      return callParser({ ...commonPayload, make: p.make, model: p.model })
-    }),
-  )
+  const runSearchForPair = async (p: CarPair) => {
+    const tryOnce = async (overrides: Record<string, unknown>) => {
+      const payload = { ...commonPayload, ...overrides, make: p.make, model: p.model }
+      const instant = await callParserInstant(payload)
+      if (instant && instant.count > 0) return instant
+      return await callParser(payload)
+    }
+
+    const strict = await tryOnce({})
+    if (strict && strict.count > 0) return strict
+
+    if (commonPayload.body_type) {
+      const noBody = await tryOnce({ body_type: null })
+      if (noBody && noBody.count > 0) return noBody
+    }
+    if (commonPayload.drive) {
+      const noDrive = await tryOnce({ body_type: null, drive: null })
+      if (noDrive && noDrive.count > 0) return noDrive
+    }
+    return strict
+  }
+  const results = await Promise.all(limitedPairs.map(runSearchForPair))
 
   // Deduplicate
   const seenUrls = new Set<string>()

@@ -232,7 +232,16 @@ ${brandConstraint}${budgetConstraint}
           budget_max: userMax,
           fuel: prefs.fuel || undefined,
           transmission: prefs.transmission || undefined,
-          body_type: prefs.body_type || undefined,
+          body_type: (() => {
+            // SUV-coupes (Cayenne Coupe, X6, X4, GLC Coupe, GLE Coupe, Q8, Macan) are
+            // categorized as SUV on AS24/Mobile.de — don't pass body_type=Coupe or it'll return 0.
+            const bt = prefs.body_type
+            if (!bt) return undefined
+            const mdl = (s.model_search ?? s.model ?? "").toLowerCase()
+            const suvCoupePatterns = ["cayenne", "x6", "x4", "q8", "macan", "glc", "gle", "urus"]
+            if (bt === "Coupe" && suvCoupePatterns.some(p => mdl.includes(p))) return undefined
+            return bt
+          })(),
           drive: prefs.drive || undefined,
         },
         _marketMin: marketMin,
