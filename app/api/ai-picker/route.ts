@@ -284,14 +284,30 @@ async function generateSearchComment(
   tags: string[],
 ): Promise<string> {
   if (totalCount === 0) {
-    // No results — still generate via Claude for natural phrasing
-    const prompt = `Ти — досвідчений автоконсультант Fresh Auto. Клієнт шукав авто за параметрами: ${JSON.stringify(prefs)}, анкета: ${tags.join(", ") || "не заповнена"}.
-Результатів 0. Напиши коротку (2-3 речення) відповідь українською:
-- Скажи що за такими параметрами зараз немає авто
-- Запропонуй КОНКРЕТНО що змінити (один параметр) щоб з'явились варіанти
-КРИТИЧНО: всі ціни ТІЛЬКИ в EUR (євро). НІКОЛИ не пиши "гривень", "грн", "UAH", "доларів", "$" — Fresh Auto працює виключно в EUR. Коли згадуєш суму — пиши "EUR" або "€".
-Без емодзі, без markdown, без зірочок. Говори як живий консультант.`
-    return callClaude(prompt, [{ role: "user", content: "Шукаю авто" }], 200)
+    // No results — Claude analyzes the filter combo and tells user which filter is the likely culprit.
+    // We DO NOT auto-relax filters — the user stays in control of what to change.
+    const prompt = `Ти — досвідчений автоконсультант Fresh Auto з 15+ років досвіду підбору авто з Європи (AutoScout24, Mobile.de, Bytbil).
+Клієнт шукав авто за параметрами: ${JSON.stringify(prefs)}
+Анкета: ${tags.join(", ") || "не заповнена"}
+Результатів: 0.
+
+ТВОЯ ЗАДАЧА — чесно пояснити клієнту ЧОМУ немає пропозицій саме за цією комбінацією, і ЩО конкретно варто прибрати або змінити, щоб з'явились варіанти. Клієнт сам вирішить які критерії коригувати — ти не повинен нічого автоматично пом'якшувати.
+
+Проаналізуй комбінацію фільтрів і знайди найбільш імовірного винуватця. Типові пастки:
+- Порше Cayenne Coupe / BMW X6 / Mercedes GLC Coupe / Audi Q8 — на AS24/Mobile.de ці авто класифікуються як SUV, а не Coupe. Якщо стоїть body_type=Coupe — його треба прибрати.
+- BMW 8er Diesel, Porsche Cayman Diesel, Audi TT Diesel — дизельних купе практично немає на ринку.
+- Вузький рік + рідкісна комбінація палива/кузова — теж часта проблема.
+- Занизький пробіг + старий рік — суперечливі вимоги.
+
+Напиши 3-5 речень українською:
+1. Коротко скажи що за цими параметрами пропозицій немає.
+2. Поясни ЧОМУ саме (яка комбінація рідкісна на ринку — будь конкретним, назви реальну причину).
+3. Запропонуй 1-2 конкретні зміни: "спробуйте прибрати [кузов/паливо/привід]" або "розширте рік до [X]". Не пропонуй всі варіанти одразу — обери найбільш імовірні.
+4. Завершуй запрошенням: клієнт сам вирішить що змінити.
+
+КРИТИЧНО: всі ціни ТІЛЬКИ в EUR (євро). НІКОЛИ не пиши "гривень", "грн", "UAH", "доларів", "$".
+Без емодзі, без markdown, без зірочок, без нумерації. Один живий абзац від експерта. ЗАВЖДИ завершуй останнє речення.`
+    return callClaude(prompt, [{ role: "user", content: "Шукаю авто" }], 500)
   }
 
   const carsDesc = foundCars.slice(0, 6).map((c: any, i: number) => {
@@ -677,30 +693,14 @@ async function triggerParser(
 
   const pairs: CarPair[] = chat.pairs.length > 0 ? chat.pairs : [{ make: null, model: null }]
 
-  // Use instant search (cache + singleflight) for each pair.
-  // Fallback cascade: if 0 results, relax body_type (SUV-coupes are SUVs on AS24/Mobile.de),
-  // then drive, to avoid empty results from overly strict filter combos.
+  // One strict search per pair — no silent fallbacks. If 0 results, we return 0
+  // and the UI/chat explains which filters may be too strict so the user can decide.
   const limitedPairs = pairs.slice(0, 3)
   const runSearchForPair = async (p: CarPair) => {
-    const tryOnce = async (overrides: Record<string, unknown>) => {
-      const payload = { ...commonPayload, ...overrides, make: p.make, model: p.model }
-      const instant = await callParserInstant(payload)
-      if (instant && instant.count > 0) return instant
-      return await callParser(payload)
-    }
-
-    const strict = await tryOnce({})
-    if (strict && strict.count > 0) return strict
-
-    if (commonPayload.body_type) {
-      const noBody = await tryOnce({ body_type: null })
-      if (noBody && noBody.count > 0) return noBody
-    }
-    if (commonPayload.drive) {
-      const noDrive = await tryOnce({ body_type: null, drive: null })
-      if (noDrive && noDrive.count > 0) return noDrive
-    }
-    return strict
+    const payload = { ...commonPayload, make: p.make, model: p.model }
+    const instant = await callParserInstant(payload)
+    if (instant && instant.count > 0) return instant
+    return await callParser(payload)
   }
   const results = await Promise.all(limitedPairs.map(runSearchForPair))
 
