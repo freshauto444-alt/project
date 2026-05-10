@@ -129,15 +129,17 @@ export async function getFeaturedOrderCars(
     (async () => {
       try {
         const supabase = await createClient()
-        const now = new Date().toISOString()
         // Fetch a wider pool than `limit` so client-side ranking by value-score
         // returns the best in the requested page slice. Capped at 200 per request.
         const fetchLimit = Math.min(200, offset + limit + 50)
+        // Note: expires_at filter removed. Parser cars naturally rotate as the
+        // worker upserts fresh batches; old rows are pruned by cleanup_expired
+        // server-side. Filtering here also masks data when the cron has not run
+        // recently, so the page would appear empty while the table has 1700+ rows.
         const { data, error, count } = await supabase
           .from("cars")
           .select("*", { count: "exact" })
           .in("source_type", ["parser_hot", "parser_featured"])
-          .or(`expires_at.is.null,expires_at.gt.${now}`)
           .not("image", "is", null)
           .limit(fetchLimit)
 
