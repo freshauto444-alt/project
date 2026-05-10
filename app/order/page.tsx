@@ -2,7 +2,9 @@ import type { Metadata } from "next"
 import { getFeaturedOrderCars } from "@/lib/cars"
 import OrderCatalogClient from "@/components/order-catalog-client"
 
-export const revalidate = 21600
+// Short revalidate (1 min) so newly parsed cars surface within a minute of
+// being upserted by the cron worker. ISR cache is per-path on Vercel.
+export const revalidate = 60
 
 export const metadata: Metadata = {
   title: "Авто під замовлення — Fresh Auto",

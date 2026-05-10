@@ -37,6 +37,11 @@ function formatDbError(err: unknown): string | null {
 //   • Fallback: any car with status = "In Stock" (covers cars without explicit
 //     source_type = "stock" but marked as available — common when migrating data)
 export async function getStockCars(): Promise<Car[]> {
+  // Check env first — fail loud rather than silently return [] on misconfigured deploys
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    console.error("[cars] getStockCars: missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    return []
+  }
   return withTimeout(
     (async () => {
       try {
@@ -54,7 +59,9 @@ export async function getStockCars(): Promise<Car[]> {
           return []
         }
 
-        return (data ?? []).map(mapDbCar).filter(c => c.image)
+        const cars = (data ?? []).map(mapDbCar).filter(c => c.image)
+        console.log(`[cars] getStockCars: ${cars.length} cars (raw rows: ${data?.length ?? 0})`)
+        return cars
       } catch (err) {
         const formatted = formatDbError(err)
         if (formatted) console.warn(`[cars] getStockCars threw: ${formatted}`)
@@ -114,6 +121,10 @@ export async function getFeaturedOrderCars(
   offset: number = 0,
   limit: number = 50,
 ): Promise<{ cars: Car[]; total: number }> {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    console.error("[cars] getFeaturedOrderCars: missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    return { cars: [], total: 0 }
+  }
   return withTimeout(
     (async () => {
       try {
@@ -138,8 +149,10 @@ export async function getFeaturedOrderCars(
 
         const all = (data ?? []).map(mapDbCar).filter(c => c.image)
         all.sort((a, b) => calcValueScore(b) - calcValueScore(a))
+        const sliced = all.slice(offset, offset + limit)
+        console.log(`[cars] getFeaturedOrderCars(offset=${offset}, limit=${limit}): ${sliced.length} returned (pool: ${all.length}, count: ${count ?? "?"})`)
         return {
-          cars: all.slice(offset, offset + limit),
+          cars: sliced,
           total: count ?? all.length,
         }
       } catch (err) {

@@ -2,7 +2,8 @@ import type { Metadata } from "next"
 import { getStockCars } from "@/lib/cars"
 import CatalogClient from "@/components/catalog-client"
 
-export const revalidate = 3600
+// Short revalidate (1 min) so admin-added stock cars appear quickly.
+export const revalidate = 60
 
 export const metadata: Metadata = {
   title: "Каталог авто з Європи в наявності — ціни, фото, характеристики",
