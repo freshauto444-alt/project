@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#030303"/>
+      <stop offset="50%" stop-color="#0a0a0a"/>
+      <stop offset="100%" stop-color="#001a18"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00D2C6" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#00D2C6" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="40"/></filter>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="900" cy="200" r="280" fill="url(#glow)" filter="url(#blur)"/>
+  <circle cx="200" cy="500" r="220" fill="url(#glow)" filter="url(#blur)" opacity="0.6"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif" fill="#F5F5F7">
+    <text x="80" y="250" font-size="88" font-weight="800" letter-spacing="-2">Fresh Auto</text>
+    <text x="80" y="330" font-size="36" font-weight="500" fill="#A0A0A8" letter-spacing="-0.5">Автомобілі з Європи під ключ</text>
+    <text x="80" y="440" font-size="24" font-weight="400" fill="#00D2C6">Київ · Львів · Рівне</text>
+    <text x="80" y="480" font-size="20" font-weight="400" fill="#8A8A92">Німеччина, Швеція, Нідерланди</text>
+    <line x1="80" y1="530" x2="280" y2="530" stroke="#00D2C6" stroke-width="3"/>
+    <text x="80" y="570" font-size="18" font-weight="400" fill="#C0C0C8">AI-підбір · Гарантія · Повне оформлення</text>
+  </g>
+</svg>

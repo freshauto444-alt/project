@@ -1,0 +1,404 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: #030303;
+  --foreground: #F5F5F7;
+  --card: #0A0A0A;
+  --card-foreground: #F5F5F7;
+  --popover: #0A0A0A;
+  --popover-foreground: #F5F5F7;
+  --primary: #00D2C6;
+  --primary-foreground: #030303;
+  --secondary: #111111;
+  --secondary-foreground: #F5F5F7;
+  --muted: #111111;
+  --muted-foreground: #A1A1A6;
+  --accent: #00D2C6;
+  --accent-foreground: #030303;
+  --destructive: #FF453A;
+  --destructive-foreground: #F5F5F7;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.08);
+  --ring: #00D2C6;
+  --chart-1: #00D2C6;
+  --chart-2: #00A89E;
+  --chart-3: #007F78;
+  --chart-4: #005652;
+  --chart-5: #003D3A;
+  --radius: 0.75rem;
+  --surface: #0A0A0A;
+}
+
+@theme inline {
+  --font-sans: 'Inter', 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'Geist Mono', 'SF Mono', monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-surface: var(--surface);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* ─── Light theme override ─── */
+:root.light {
+  --background: #F8F8FA;
+  --foreground: #1A1A1A;
+  --card: #FFFFFF;
+  --card-foreground: #1A1A1A;
+  --popover: #FFFFFF;
+  --popover-foreground: #1A1A1A;
+  --primary: #00B2A9;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F0F0F2;
+  --secondary-foreground: #1A1A1A;
+  --muted: #F0F0F2;
+  --muted-foreground: #6B6B70;
+  --accent: #00B2A9;
+  --accent-foreground: #FFFFFF;
+  --destructive: #DC3545;
+  --destructive-foreground: #FFFFFF;
+  --border: rgba(0, 0, 0, 0.1);
+  --input: rgba(0, 0, 0, 0.1);
+  --ring: #00B2A9;
+  --surface: #FFFFFF;
+}
+
+/* Light mode: card visibility boost */
+:root.light .bg-card,
+:root.light [class*="bg-card"] {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.03);
+}
+
+/* Alternating section backgrounds for visual rhythm */
+:root.light section:nth-child(even) {
+  background-color: #FFFFFF;
+}
+:root.light section:nth-child(odd) {
+  background-color: #F8F8FA;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+:root.light ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); }
+:root.light ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.22); }
+
+/* Glassmorphism */
+.glass { background: rgba(10,10,10,0.72); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+.glass-strong { background: rgba(3,3,3,0.88); backdrop-filter: blur(40px); -webkit-backdrop-filter: blur(40px); }
+:root.light .glass { background: rgba(255,255,255,0.78); }
+:root.light .glass-strong { background: rgba(248,248,250,0.92); }
+
+/* ─── Light theme overrides for hardcoded dark colors ─── */
+
+/* Background overrides */
+:root.light .bg-\[\#0A0A0A\] { background-color: #FFFFFF !important; }
+:root.light .bg-\[\#0d0d0d\] { background-color: #FFFFFF !important; }
+:root.light .bg-\[\#030303\] { background-color: #F8F8FA !important; }
+:root.light .bg-\[\#111\],
+:root.light .bg-\[\#111111\] { background-color: #F0F0F2 !important; }
+:root.light .bg-white\/\[0\.02\] { background-color: rgba(0,0,0,0.015) !important; }
+:root.light .bg-white\/\[0\.03\] { background-color: rgba(0,0,0,0.025) !important; }
+:root.light .bg-white\/\[0\.04\] { background-color: rgba(0,0,0,0.03) !important; }
+:root.light .bg-white\/\[0\.06\] { background-color: rgba(0,0,0,0.04) !important; }
+:root.light .bg-white\/\[0\.08\] { background-color: rgba(0,0,0,0.05) !important; }
+:root.light .bg-white\/10 { background-color: rgba(0,0,0,0.08) !important; }
+
+/* Hover backgrounds */
+:root.light .hover\:bg-white\/\[0\.04\]:hover { background-color: rgba(0,0,0,0.04) !important; }
+:root.light .hover\:bg-white\/\[0\.06\]:hover { background-color: rgba(0,0,0,0.05) !important; }
+:root.light .hover\:bg-white\/\[0\.08\]:hover { background-color: rgba(0,0,0,0.06) !important; }
+
+/* Border overrides */
+:root.light .border-white\/\[0\.04\] { border-color: rgba(0,0,0,0.06) !important; }
+:root.light .border-white\/\[0\.06\] { border-color: rgba(0,0,0,0.08) !important; }
+:root.light .border-white\/\[0\.08\] { border-color: rgba(0,0,0,0.1) !important; }
+:root.light .hover\:border-white\/\[0\.08\]:hover { border-color: rgba(0,0,0,0.12) !important; }
+:root.light .border-dashed.border-white\/\[0\.08\] { border-color: rgba(0,0,0,0.12) !important; }
+
+/* Ring overrides */
+:root.light .ring-white\/\[0\.06\] { --tw-ring-color: rgba(0,0,0,0.08) !important; }
+:root.light .ring-white\/\[0\.04\] { --tw-ring-color: rgba(0,0,0,0.06) !important; }
+
+/* Text overrides — DO NOT override .text-white globally; it breaks badges/buttons on images */
+:root.light .text-white\/60:not([class*="backdrop"]) { color: rgba(0,0,0,0.55) !important; }
+:root.light .text-white\/50:not([class*="backdrop"]) { color: rgba(0,0,0,0.45) !important; }
+:root.light .text-white\/40:not([class*="backdrop"]) { color: rgba(0,0,0,0.4) !important; }
+:root.light .text-white\/35:not([class*="backdrop"]) { color: rgba(0,0,0,0.35) !important; }
+:root.light .text-white\/32:not([class*="backdrop"]) { color: rgba(0,0,0,0.32) !important; }
+:root.light .text-white\/30:not([class*="backdrop"]) { color: rgba(0,0,0,0.3) !important; }
+:root.light .text-white\/25:not([class*="backdrop"]) { color: rgba(0,0,0,0.25) !important; }
+:root.light .text-white\/20:not([class*="backdrop"]) { color: rgba(0,0,0,0.2) !important; }
+/* text-white/70, /80, and text-white — keep white on image overlays and backdrop-blur elements */
+
+/* Border overrides for light */
+:root.light .border-white\/\[0\.10\],
+:root.light .border-white\/\[0\.12\],
+:root.light .border-white\/\[0\.14\] { border-color: rgba(0,0,0,0.12) !important; }
+:root.light .hover\:border-white\/\[0\.1\]:hover,
+:root.light .hover\:border-white\/\[0\.14\]:hover { border-color: rgba(0,0,0,0.15) !important; }
+
+/* Picker specific: select dropdowns */
+:root.light select { background-color: var(--card) !important; color: var(--foreground) !important; }
+
+/* Hover text overrides */
+:root.light .hover\:text-white\/60:hover:not([class*="backdrop"]) { color: rgba(0,0,0,0.6) !important; }
+:root.light .hover\:text-white\/50:hover:not([class*="backdrop"]) { color: rgba(0,0,0,0.5) !important; }
+
+/* Overlay/Backdrop */
+:root.light .bg-black\/60 { background-color: rgba(0,0,0,0.35) !important; }
+:root.light .bg-black\/40 { background-color: rgba(0,0,0,0.2) !important; }
+
+/* Shadow adjustments */
+:root.light .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0,0,0,0.12) !important; }
+:root.light .shadow-black\/20 { --tw-shadow-color: rgba(0,0,0,0.06) !important; }
+:root.light .hover\:shadow-2xl:hover { box-shadow: 0 25px 50px -12px rgba(0,0,0,0.15) !important; }
+
+/* Form elements */
+:root.light select option { background-color: #fff; color: #1A1A1A; }
+:root.light input::placeholder { color: rgba(0,0,0,0.3) !important; }
+
+/* Animations & special elements */
+:root.light .skeleton-loader { background: linear-gradient(90deg,#F0F0F2 25%,#FFFFFF 50%,#F0F0F2 75%); background-size: 200% 100%; animation: shimmer 2s infinite; }
+:root.light .hero-cta-primary { animation: none; box-shadow: 0 0 40px rgba(0,178,169,0.15), 0 8px 24px rgba(0,0,0,0.08); }
+
+/* Scrollbar inside modals and panels */
+:root.light .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); }
+
+/* Fix foreground-based opacity for light mode */
+:root.light .bg-foreground\/\[0\.05\] { background-color: rgba(0,0,0,0.04) !important; }
+:root.light .bg-foreground\/\[0\.06\] { background-color: rgba(0,0,0,0.05) !important; }
+:root.light .bg-foreground\/\[0\.03\] { background-color: rgba(0,0,0,0.025) !important; }
+
+/* Light mode navbar border fix */
+:root.light .hover\:border-primary\/20:hover { border-color: rgba(0,178,169,0.25) !important; }
+:root.light .hover\:border-primary\/25:hover { border-color: rgba(0,178,169,0.3) !important; }
+
+/* Light mode: card hover shadow */
+:root.light .hover\:shadow-xl:hover { box-shadow: 0 20px 50px -15px rgba(0,0,0,0.1) !important; }
+
+/* Light mode: improve border-white opacity classes */
+:root.light .border-white\/\[0\.1\] { border-color: rgba(0,0,0,0.08) !important; }
+:root.light .hover\:border-white\/\[0\.12\]:hover { border-color: rgba(0,0,0,0.12) !important; }
+:root.light .hover\:border-white\/20:hover { border-color: rgba(0,0,0,0.15) !important; }
+
+/* Light mode: text-white/22 and similar very low opacity */
+:root.light .text-white\/22:not([class*="backdrop"]) { color: rgba(0,0,0,0.22) !important; }
+:root.light .text-white\/18:not([class*="backdrop"]) { color: rgba(0,0,0,0.18) !important; }
+:root.light .text-white\/15:not([class*="backdrop"]) { color: rgba(0,0,0,0.15) !important; }
+
+/* Light mode: placeholder colors */
+:root.light .placeholder\:text-muted-foreground\/40::placeholder { color: rgba(107,107,112,0.5) !important; }
+:root.light .placeholder\:text-muted-foreground\/35::placeholder { color: rgba(107,107,112,0.45) !important; }
+
+/* Light mode: bg-primary alpha variants */
+:root.light .bg-primary\/\[0\.04\] { background-color: rgba(0,178,169,0.05) !important; }
+:root.light .bg-primary\/\[0\.06\] { background-color: rgba(0,178,169,0.07) !important; }
+:root.light .bg-primary\/\[0\.07\] { background-color: rgba(0,178,169,0.08) !important; }
+:root.light .bg-primary\/\[0\.08\] { background-color: rgba(0,178,169,0.09) !important; }
+:root.light .bg-primary\/\[0\.1\] { background-color: rgba(0,178,169,0.12) !important; }
+:root.light .bg-primary\/\[0\.12\] { background-color: rgba(0,178,169,0.14) !important; }
+
+/* Hero CTA ambient glow pulse */
+@keyframes cta-glow {
+  0%, 100% { box-shadow: 0 0 60px rgba(0,210,198,0.3), 0 0 120px rgba(0,210,198,0.08), 0 8px 32px rgba(0,0,0,0.4); }
+  50% { box-shadow: 0 0 80px rgba(0,210,198,0.45), 0 0 160px rgba(0,210,198,0.15), 0 8px 32px rgba(0,0,0,0.4); }
+}
+.hero-cta-primary { animation: cta-glow 3s ease-in-out infinite; }
+
+/* Skeleton */
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.skeleton-loader { background: linear-gradient(90deg,#0A0A0A 25%,#141414 50%,#0A0A0A 75%); background-size: 200% 100%; animation: shimmer 2s infinite; }
+
+/* ─── Dual-range slider ─── */
+.dual-range { position: relative; }
+.dual-range input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent !important;
+  pointer-events: none;
+  margin: 0;
+  padding: 0;
+  outline: none;
+}
+.dual-range input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  background: transparent;
+}
+.dual-range input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: #F5F5F7;
+  border: 2px solid #00D2C6;
+  box-shadow: 0 1px 8px rgba(0,0,0,0.6);
+  pointer-events: auto;
+  cursor: grab;
+  margin-top: -9px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.dual-range input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+  box-shadow: 0 0 0 5px rgba(0,210,198,0.15);
+}
+.dual-range input[type="range"]::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  transform: scale(1.05);
+}
+.dual-range input[type="range"]::-moz-range-track { height: 6px; background: transparent; }
+.dual-range input[type="range"]::-moz-range-thumb {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: #F5F5F7;
+  border: 2px solid #00D2C6;
+  box-shadow: 0 1px 8px rgba(0,0,0,0.6);
+  pointer-events: auto;
+  cursor: grab;
+}
+
+/* ─── Single range slider ─── */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px; border-radius: 2px;
+  outline: none; cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: #F5F5F7;
+  border: 2px solid #00D2C6;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.5);
+  cursor: grab;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+  box-shadow: 0 0 0 4px rgba(0,210,198,0.12);
+}
+input[type="range"]::-webkit-slider-thumb:active { cursor: grabbing; transform: scale(1.05); }
+input[type="range"]::-moz-range-thumb {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: #F5F5F7;
+  border: 2px solid #00D2C6;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.5);
+  cursor: grab;
+}
+
+/* ─── Focus ring for interactive elements ─── */
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid rgba(0,210,198,0.4);
+  outline-offset: 2px;
+}
+
+/* ─── Inline dual-range thumb (standalone sliders) ─── */
+.dual-range-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent !important;
+  pointer-events: none;
+  margin: 0; padding: 0; outline: none;
+}
+.dual-range-thumb::-webkit-slider-runnable-track { height: 6px; background: transparent; }
+.dual-range-thumb::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #F5F5F7; border: 2px solid #00D2C6;
+  box-shadow: 0 1px 8px rgba(0,0,0,0.5);
+  pointer-events: auto; cursor: grab; margin-top: -8px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.dual-range-thumb::-webkit-slider-thumb:hover {
+  transform: scale(1.15); box-shadow: 0 0 0 5px rgba(0,210,198,0.15);
+}
+.dual-range-thumb::-webkit-slider-thumb:active { cursor: grabbing; }
+.dual-range-thumb::-moz-range-track { height: 6px; background: transparent; }
+.dual-range-thumb::-moz-range-thumb {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #F5F5F7; border: 2px solid #00D2C6;
+  box-shadow: 0 1px 8px rgba(0,0,0,0.5);
+  pointer-events: auto; cursor: grab;
+}
+
+/* Light-mode slider thumbs */
+:root.light .dual-range input[type="range"]::-webkit-slider-thumb,
+:root.light .dual-range-thumb::-webkit-slider-thumb,
+:root.light input[type="range"]::-webkit-slider-thumb { background: #1A1A1A; border-color: #00B2A9; box-shadow: 0 1px 6px rgba(0,0,0,0.15); }
+:root.light .dual-range input[type="range"]::-moz-range-thumb,
+:root.light .dual-range-thumb::-moz-range-thumb,
+:root.light input[type="range"]::-moz-range-thumb { background: #1A1A1A; border-color: #00B2A9; box-shadow: 0 1px 6px rgba(0,0,0,0.15); }
+
+/* Map filter — dark mode inverts to dark theme, light mode uses subtle desaturation */
+.map-filter { filter: invert(1) hue-rotate(180deg) saturate(0.3) brightness(0.7) contrast(1.2); }
+:root.light .map-filter { filter: saturate(0.7) brightness(0.95) contrast(1.05); }
+
+/*
+ * Navbar on hero — pure CSS, no JS hydration issues.
+ * When <main> starts with the hero section (has .hero-video-bg child),
+ * the navbar gets white text via adjacent sibling + :has() selector.
+ * Fallback: .navbar-hero-active class toggled by hero IntersectionObserver.
+ */
+header.navbar-hero-active a,
+header.navbar-hero-active button,
+header.navbar-hero-active span:not(.text-primary) { color: rgba(255,255,255,0.85) !important; }
+header.navbar-hero-active a:hover,
+header.navbar-hero-active button:hover { color: #fff !important; }
+header.navbar-hero-active .text-primary { color: var(--primary) !important; }
+header.navbar-hero-active svg { color: inherit !important; }
+header.navbar-hero-active .bg-foreground\/\[0\.06\] { background-color: rgba(255,255,255,0.12) !important; }
+
+/* Thin scrollbar utility */
+.scrollbar-thin::-webkit-scrollbar { width: 3px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+
+/* Prevent overscroll on modal panels */
+.overscroll-lock { overscroll-behavior: contain; }

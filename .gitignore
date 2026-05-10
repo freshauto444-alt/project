@@ -1,0 +1,27 @@
+# v0 runtime files
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+
+# Dependencies / build
+node_modules/
+.next/
+tsconfig.tsbuildinfo
+
+# Env (NEVER commit — real secrets live here)
+.env
+.env.*
+!.env.example
+
+# Logs
+.logs/
+*.log
+
+# IDE / local
+.claude/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
