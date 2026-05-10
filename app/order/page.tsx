@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 import { getFeaturedOrderCars } from "@/lib/cars"
-import CatalogClient from "@/components/catalog-client"
+import OrderCatalogClient from "@/components/order-catalog-client"
 
 export const revalidate = 21600
 
@@ -16,10 +16,11 @@ export const metadata: Metadata = {
 }
 
 export default async function OrderPage() {
-  const cars = await getFeaturedOrderCars()
+  // Initial server-side fetch — 50 most relevant cars by value score
+  const { cars, total } = await getFeaturedOrderCars(0, 50)
   return (
     <div className="pt-20">
-      <CatalogClient cars={cars} />
+      <OrderCatalogClient initialCars={cars} initialTotal={total} />
     </div>
   )
 }

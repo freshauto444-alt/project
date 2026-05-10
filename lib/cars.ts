@@ -32,6 +32,10 @@ function formatDbError(err: unknown): string | null {
   return parts.filter(Boolean).join(" · ") || "empty error object"
 }
 
+// Cars in company's own inventory.
+//   • Primary: source_type = "stock" — manually entered by admin / imported
+//   • Fallback: any car with status = "In Stock" (covers cars without explicit
+//     source_type = "stock" but marked as available — common when migrating data)
 export async function getStockCars(): Promise<Car[]> {
   return withTimeout(
     (async () => {
@@ -40,7 +44,8 @@ export async function getStockCars(): Promise<Car[]> {
         const { data, error } = await supabase
           .from("cars")
           .select("*")
-          .eq("source_type", "stock")
+          .or("source_type.eq.stock,status.eq.In Stock")
+          .not("image", "is", null)
           .order("price", { ascending: true })
 
         if (error) {
@@ -49,7 +54,7 @@ export async function getStockCars(): Promise<Car[]> {
           return []
         }
 
-        return (data ?? []).map(mapDbCar)
+        return (data ?? []).map(mapDbCar).filter(c => c.image)
       } catch (err) {
         const formatted = formatDbError(err)
         if (formatted) console.warn(`[cars] getStockCars threw: ${formatted}`)
@@ -105,37 +110,46 @@ function calcValueScore(car: Car): number {
   return score
 }
 
-export async function getFeaturedOrderCars(): Promise<Car[]> {
+export async function getFeaturedOrderCars(
+  offset: number = 0,
+  limit: number = 50,
+): Promise<{ cars: Car[]; total: number }> {
   return withTimeout(
     (async () => {
       try {
         const supabase = await createClient()
         const now = new Date().toISOString()
-        const { data, error } = await supabase
+        // Fetch a wider pool than `limit` so client-side ranking by value-score
+        // returns the best in the requested page slice. Capped at 200 per request.
+        const fetchLimit = Math.min(200, offset + limit + 50)
+        const { data, error, count } = await supabase
           .from("cars")
-          .select("*")
+          .select("*", { count: "exact" })
           .in("source_type", ["parser_hot", "parser_featured"])
           .or(`expires_at.is.null,expires_at.gt.${now}`)
           .not("image", "is", null)
-          .limit(200)
+          .limit(fetchLimit)
 
         if (error) {
           const formatted = formatDbError(error)
           if (formatted) console.warn(`[cars] getFeaturedOrderCars: ${formatted}`)
-          return []
+          return { cars: [] as Car[], total: 0 }
         }
 
-        const cars = (data ?? []).map(mapDbCar).filter(c => c.image)
-        cars.sort((a, b) => calcValueScore(b) - calcValueScore(a))
-        return cars
+        const all = (data ?? []).map(mapDbCar).filter(c => c.image)
+        all.sort((a, b) => calcValueScore(b) - calcValueScore(a))
+        return {
+          cars: all.slice(offset, offset + limit),
+          total: count ?? all.length,
+        }
       } catch (err) {
         const formatted = formatDbError(err)
         if (formatted) console.warn(`[cars] getFeaturedOrderCars threw: ${formatted}`)
-        return []
+        return { cars: [] as Car[], total: 0 }
       }
     })(),
     3000,
-    [] as Car[],
+    { cars: [] as Car[], total: 0 },
   )
 }
 

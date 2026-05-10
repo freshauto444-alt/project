@@ -1038,11 +1038,79 @@ interface CatalogProps {
   onSelectCar: (car: Car) => void
   user?: { name: string; email: string } | null
   cars: Car[]
+  // Optional server-pagination: when provided, "Show more" fetches the next
+  // page from the parent (which appends to its `cars` state). Used by /order.
+  onLoadMore?: () => Promise<Car[]>
+  loadingMore?: boolean
+  totalCount?: number  // hint for "X / total" label
 }
 
 const PAGE_SIZE = 20
 
-export default function InventoryCatalog({ onSelectCar, user, cars: allCars }: CatalogProps) {
+// ── "Show more" button: handles both client-side slicing (incrementing visibleCount)
+// AND server-side pagination (calling onLoadMore when local cars are exhausted).
+function ShowMoreButton({
+  visibleCount,
+  totalLoaded,
+  totalRemote,
+  onClickClient,
+  onLoadMore,
+  loadingMore,
+  language,
+}: {
+  visibleCount: number
+  totalLoaded: number
+  totalRemote?: number
+  onClickClient: () => void
+  onLoadMore?: () => Promise<Car[]>
+  loadingMore: boolean
+  language: import("@/lib/i18n").Language
+}) {
+  const clientHasMore = visibleCount < totalLoaded
+  const serverHasMore = !!onLoadMore && (totalRemote == null || totalLoaded < totalRemote)
+  const visibleRemaining = clientHasMore ? totalLoaded - visibleCount : 0
+  const totalRemaining = totalRemote != null
+    ? Math.max(0, totalRemote - visibleCount)
+    : visibleRemaining
+
+  if (!clientHasMore && !serverHasMore) return null
+
+  const handleClick = async () => {
+    if (clientHasMore) {
+      onClickClient()
+    } else if (onLoadMore) {
+      await onLoadMore()
+      // After fetch, parent state grows → withImage grows → user can click "show more" again
+      // Auto-show first batch of newly loaded cars (one PAGE_SIZE step)
+      onClickClient()
+    }
+  }
+
+  return (
+    <div className="flex justify-center mt-6">
+      <button
+        onClick={handleClick}
+        disabled={loadingMore}
+        className="rounded-xl bg-primary/[0.1] px-8 py-3 text-sm font-medium text-primary hover:bg-primary/[0.15] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+      >
+        {loadingMore
+          ? (language === "uk" ? "Завантаження…" : "Loading…")
+          : t("catalog.showMoreWithRemaining", language, {
+              remaining: totalRemaining,
+            })}
+      </button>
+    </div>
+  )
+}
+
+export default function InventoryCatalog({
+  onSelectCar,
+  user,
+  cars: allCars,
+  onLoadMore,
+  loadingMore = false,
+  totalCount,
+}: CatalogProps) {
   const { formatPrice, language } = useSettings()
   // Filter state
   const [selMakes, setSelMakes] = useState<string[]>([])
@@ -1350,16 +1418,15 @@ export default function InventoryCatalog({ onSelectCar, user, cars: allCars }: C
                   />
                 ))}
               </div>
-              {visibleCount < withImage.length && (
-                <div className="flex justify-center mt-6">
-                  <button
-                    onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
-                    className="rounded-xl bg-primary/[0.1] px-8 py-3 text-sm font-medium text-primary hover:bg-primary/[0.15] transition-all cursor-pointer"
-                  >
-                    {t("catalog.showMoreWithRemaining", language, { remaining: withImage.length - visibleCount })}
-                  </button>
-                </div>
-              )}
+              <ShowMoreButton
+                visibleCount={visibleCount}
+                totalLoaded={withImage.length}
+                totalRemote={totalCount}
+                onClickClient={() => setVisibleCount(prev => prev + PAGE_SIZE)}
+                onLoadMore={onLoadMore}
+                loadingMore={loadingMore}
+                language={language}
+              />
             </>
           ) : (
             <>
@@ -1376,16 +1443,15 @@ export default function InventoryCatalog({ onSelectCar, user, cars: allCars }: C
                   />
                 ))}
               </div>
-              {visibleCount < withImage.length && (
-                <div className="flex justify-center mt-6">
-                  <button
-                    onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
-                    className="rounded-xl bg-primary/[0.1] px-8 py-3 text-sm font-medium text-primary hover:bg-primary/[0.15] transition-all cursor-pointer"
-                  >
-                    {t("catalog.showMoreWithRemaining", language, { remaining: withImage.length - visibleCount })}
-                  </button>
-                </div>
-              )}
+              <ShowMoreButton
+                visibleCount={visibleCount}
+                totalLoaded={withImage.length}
+                totalRemote={totalCount}
+                onClickClient={() => setVisibleCount(prev => prev + PAGE_SIZE)}
+                onLoadMore={onLoadMore}
+                loadingMore={loadingMore}
+                language={language}
+              />
             </>
           )}
       </div>
