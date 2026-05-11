@@ -305,15 +305,26 @@ model_search = назва моделі lowercase, БЕЗ префіксу мар
     ? `\n\n${inventoryContext}\n\nВикористай ці дані як підказку — якщо наявні авто відповідають запиту клієнта, рекомендуй їх першими.`
     : ""
 
+  // When budget is missing, DO NOT force a synthetic 20-40k EUR range — that
+  // makes Claude pick unrealistic prices for premium suggestions (e.g. Porsche
+  // 718 Cayman at €23k turnkey, which the model itself acknowledges as
+  // "практично нереальна комбінація"). Instead, let Claude propose prices
+  // anchored to actual market rates for the cars it recommends.
+  const hasBudget = !!(prefs.budget_min || prefs.budget_max)
+  const prefsBlock = prefsDesc.join("\n") ||
+    "Не вказані. Запропонуй 3 моделі різного класу та користуйся СВОЇМИ знаннями про реальний ринок — priceRange має відповідати справжнім turnkey-цінам моделей, які ти пропонуєш (НЕ занижуй під уявний бюджет)."
+
   const userMessage =
-    `Параметри клієнта:\n${prefsDesc.join("\n") || "Не вказані — запропонуй різноманітні варіанти в діапазоні 20000-40000 EUR"}` +
+    `Параметри клієнта:\n${prefsBlock}` +
     freeTextBlock +
     inventoryBlock +
     `\n\nВАЖЛИВО ПРО ЦІНИ:
 • Бюджет клієнта — у TURNKEY (фінал в Україні).
 • Формула: turnkey = EU × 1.38 + 4500 (мито+акциз+ПДВ+комісія+доставка+реєстрація).
 • Орієнтуйся на свої знання про ринок Німеччини/Швеції 2015-2026: типові EU-ціни моделі/року + вищенаведена формула = твій priceRange.
-• Не пропонуй модель, якщо її реальна turnkey-ціна перевищує бюджет клієнта.
+${hasBudget
+  ? "• Не пропонуй модель, якщо її реальна turnkey-ціна перевищує бюджет клієнта."
+  : "• Бюджет не вказаний — будь чесним: пропонуй РЕАЛЬНІ turnkey-ціни моделей, не штучно занижуй під якийсь діапазон. Якщо модель реально коштує €60k turnkey — пиши €60k, не €23k."}
 
 ФОРМАТ ВІДПОВІДІ: ТІЛЬКИ JSON-масив, що починається з [ і закінчується ]. Без тексту до/після, без markdown ${"```"}, без уточнюючих питань. Якщо параметрів недостатньо — здогадайся розумно і поверни 3 пропозиції. Перший символ відповіді МУСИТЬ бути [.`
 

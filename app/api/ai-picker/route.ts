@@ -662,8 +662,22 @@ ${prevContext}
       return prevVal  // not mentioned → keep previous
     }
 
+    // Reorder pairs so any newly-added pick (not in prev.pairs) goes LAST.
+    // The /triggerParser merger iterates results in reverse, so the latest
+    // user pick ends up at the top of the displayed list. Without this
+    // reordering, the AI sometimes returns the new pair in arbitrary
+    // position and the user sees their just-selected brand below older ones.
+    const prevPairKeys = new Set(
+      (previous?.pairs ?? []).map(p => `${(p.make || "").toLowerCase()}|${(p.model || "").toLowerCase()}`)
+    )
+    const pairKey = (p: CarPair) => `${(p.make || "").toLowerCase()}|${(p.model || "").toLowerCase()}`
+    const orderedPairs = [
+      ...pairs.filter(p => prevPairKeys.has(pairKey(p))),
+      ...pairs.filter(p => !prevPairKeys.has(pairKey(p))),
+    ]
+
     return {
-      pairs: pairs.length > 0 ? pairs : prev.pairs,
+      pairs: orderedPairs.length > 0 ? orderedPairs : prev.pairs,
       fuel: mergeField("fuel", prev.fuel),
       body_type: mergeField("body_type", prev.body_type),
       budget: typeof parsed.budget === "number" ? parsed.budget : prev.budget,
