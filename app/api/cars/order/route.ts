@@ -10,13 +10,15 @@ export async function GET(req: Request): Promise<Response> {
   const offset = Math.max(0, parseInt(url.searchParams.get("offset") ?? "0") || 0)
   const limitRaw = parseInt(url.searchParams.get("limit") ?? "20") || 20
   const limit = Math.min(50, Math.max(1, limitRaw))
+  const query = (url.searchParams.get("q") ?? "").slice(0, 80)
 
-  const { cars, total } = await getFeaturedOrderCars(offset, limit)
+  const { cars, total } = await getFeaturedOrderCars(offset, limit, query)
   return NextResponse.json({
     cars,
     offset,
     limit,
     total,
+    query,
     hasMore: offset + cars.length < total,
   })
 }

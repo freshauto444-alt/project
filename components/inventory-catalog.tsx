@@ -1062,6 +1062,11 @@ interface CatalogProps {
   onLoadMore?: () => Promise<Car[]>
   loadingMore?: boolean
   totalCount?: number  // hint for "X / total" label
+  // Optional server-side search: when provided, the search input fires this
+  // callback (debounced in parent) instead of filtering only the loaded
+  // cars. Used by /order so users can find ANY car in the DB, not just the
+  // ~50 currently rendered.
+  onSearchChange?: (query: string) => void
 }
 
 const PAGE_SIZE = 20
@@ -1130,6 +1135,7 @@ export default function InventoryCatalog({
   onLoadMore,
   loadingMore = false,
   totalCount,
+  onSearchChange,
 }: CatalogProps) {
   const { formatPrice, language } = useSettings()
   // Filter state
@@ -1160,6 +1166,17 @@ export default function InventoryCatalog({
   const [hpRange, setHpRange] = useState<[number, number]>([0, 2000])
   const [mileageRange, setMileageRange] = useState<[number, number]>([0, 500000])
   const [searchQ, setSearchQ] = useState("")
+
+  // Debounced fan-out to parent when a server-side search handler is wired.
+  // The local searchQ keeps narrowing within already-loaded cars in real
+  // time (so the user sees instant feedback as they type), and 350 ms after
+  // they stop typing we ask the parent to refetch from the server so the
+  // search can find cars beyond the loaded page.
+  useEffect(() => {
+    if (!onSearchChange) return
+    const id = setTimeout(() => onSearchChange(searchQ.trim()), 350)
+    return () => clearTimeout(id)
+  }, [searchQ, onSearchChange])
 
   // View state
   const [view, setView] = useState<"grid" | "list">("grid")

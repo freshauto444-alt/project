@@ -25,6 +25,8 @@ export default function OrderCatalogClient({ initialCars, initialTotal }: Props)
   const [selectedCar, setSelectedCar] = useState<Car | null>(null)
   const [showModal, setShowModal] = useState(false)
   const [checkoutCar, setCheckoutCar] = useState<Car | null>(null)
+  // Active server-side search query. Empty string = no query (default page).
+  const [query, setQuery] = useState<string>("")
 
   useEffect(() => {
     document.body.style.overflow = showModal ? "hidden" : ""
@@ -56,7 +58,9 @@ export default function OrderCatalogClient({ initialCars, initialTotal }: Props)
     if (cars.length >= total && total > 0) return []
     setLoadingMore(true)
     try {
-      const res = await fetch(`/api/cars/order?offset=${cars.length}&limit=${PAGE_SIZE}`)
+      const qs = new URLSearchParams({ offset: String(cars.length), limit: String(PAGE_SIZE) })
+      if (query) qs.set("q", query)
+      const res = await fetch(`/api/cars/order?${qs}`)
       if (!res.ok) return []
       const data = await res.json() as { cars: Car[]; total: number; hasMore: boolean }
       const newCars: Car[] = data.cars ?? []
@@ -75,7 +79,23 @@ export default function OrderCatalogClient({ initialCars, initialTotal }: Props)
     } finally {
       setLoadingMore(false)
     }
-  }, [cars.length, total, loadingMore])
+  }, [cars.length, total, loadingMore, query])
+
+  // Server-side search — debounced upstream by InventoryCatalog (350 ms).
+  // Replaces the visible list with the first 50 results from /api/cars/order
+  // matching `q` across make + model. Empty query resets to the default page.
+  const handleSearch = useCallback(async (q: string) => {
+    setQuery(q)
+    try {
+      const qs = new URLSearchParams({ offset: "0", limit: "50" })
+      if (q) qs.set("q", q)
+      const res = await fetch(`/api/cars/order?${qs}`)
+      if (!res.ok) return
+      const data = await res.json() as { cars: Car[]; total: number }
+      setCars(data.cars ?? [])
+      setTotal(typeof data.total === "number" ? data.total : 0)
+    } catch { /* keep current state on network error */ }
+  }, [])
 
   if (checkoutCar) {
     return <CheckoutFlow car={checkoutCar} onClose={handleCloseCheckout} />
@@ -92,6 +112,7 @@ export default function OrderCatalogClient({ initialCars, initialTotal }: Props)
         onLoadMore={hasMoreOnServer ? loadMore : undefined}
         loadingMore={loadingMore}
         totalCount={total}
+        onSearchChange={handleSearch}
       />
 
       <AnimatePresence>

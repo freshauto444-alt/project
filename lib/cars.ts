@@ -136,6 +136,7 @@ function calcValueScore(car: Car): number {
 export async function getFeaturedOrderCars(
   offset: number = 0,
   limit: number = 50,
+  query: string = "",
 ): Promise<{ cars: Car[]; total: number }> {
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     console.error("[cars] getFeaturedOrderCars: missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY")
@@ -151,13 +152,24 @@ export async function getFeaturedOrderCars(
         // their gallery weigh ~10KB each, so 200 rows can exceed the limit
         // and silently truncate, hiding heavy-photo cars from the listing).
         // Ordering by price keeps pagination stable across requests.
-        const { data, error, count } = await supabase
+        let q = supabase
           .from("cars")
           .select("*", { count: "exact" })
           // parser_hot/featured = curated cron batch (every 6h)
           // parser_search = ad-hoc user-search results (auto-persisted, 48h TTL)
           .in("source_type", ["parser_hot", "parser_featured", "parser_search"])
           .not("image", "is", null)
+
+        // Free-text search across make + model. Escape % and , so users
+        // can type "porsche" or "gtr" without accidentally hitting
+        // PostgREST's .or() operator syntax.
+        const trimmed = query.trim()
+        if (trimmed) {
+          const safe = trimmed.replace(/[,()]/g, " ")
+          q = q.or(`make.ilike.%${safe}%,model.ilike.%${safe}%`)
+        }
+
+        const { data, error, count } = await q
           .order("price", { ascending: true, nullsFirst: false })
           .range(offset, offset + limit - 1)
 
