@@ -899,10 +899,18 @@ async function triggerParser(
     }),
   )
 
-  // Deduplicate
+  // Deduplicate — iterate pairs in REVERSE chronological order so the
+  // most-recently-added selection appears first in the merged list.
+  //
+  // Why this matters: when the chat is cumulative (user picked BMW first,
+  // then Audi), `pairs` grows in the order they were added. If we kept
+  // natural order, the old BMW results would still appear at the top
+  // and the user would have to scroll past them to see the cars they
+  // just asked about. Reversing puts the latest pick at the top of
+  // each refresh, which matches user expectation.
   const seenUrls = new Set<string>()
   let allCars: any[] = []
-  for (const r of results) {
+  for (const r of [...results].reverse()) {
     if (!r) continue
     for (const car of r.cars ?? []) {
       const key = (car.url ?? car.source_url ?? car.id) as string
