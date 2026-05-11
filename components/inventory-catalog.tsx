@@ -556,7 +556,7 @@ function ExtendedFilters({
    CarCard — grid mode (memoized)
    ═══════════════════════════════════════════ */
 const CarCard = memo(function CarCard({
-  car, onSelect, onGallery, liked, onLike, pool,
+  car, onSelect, onGallery, liked, onLike, pool, onImageError,
 }: {
   car: Car
   onSelect: (c: Car) => void
@@ -564,11 +564,22 @@ const CarCard = memo(function CarCard({
   liked: boolean
   onLike: () => void
   pool: Car[]
+  onImageError?: (carId: string) => void
 }) {
   const { formatPrice, language } = useSettings()
   const [loaded, setLoaded] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
-  useEffect(() => { if (imgRef.current?.complete) setLoaded(true) }, [])
+  useEffect(() => {
+    if (imgRef.current?.complete) {
+      // Image already in cache when this mounts. Check naturalWidth — if 0,
+      // the cached request was an error (404, blocked), so we hide the card.
+      if (imgRef.current.naturalWidth === 0) {
+        onImageError?.(car.id)
+      } else {
+        setLoaded(true)
+      }
+    }
+  }, [car.id, onImageError])
   const rating = useMemo(() => computeCardRating(car, pool), [car, pool])
 
   return (
@@ -586,6 +597,7 @@ const CarCard = memo(function CarCard({
             className={`h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] ${loaded ? "opacity-100" : "opacity-0"}`}
             loading="lazy"
             onLoad={() => setLoaded(true)}
+            onError={() => onImageError?.(car.id)}
           />
         )}
         {/* Gradient overlay */}
@@ -677,7 +689,7 @@ const CarCard = memo(function CarCard({
    CarListItem — AUTO.RIA style horizontal card
    ═══════════════════════════════════════════ */
 const CarListItem = memo(function CarListItem({
-  car, onSelect, onGallery, liked, onLike, pool,
+  car, onSelect, onGallery, liked, onLike, pool, onImageError,
 }: {
   car: Car
   onSelect: (c: Car) => void
@@ -685,12 +697,18 @@ const CarListItem = memo(function CarListItem({
   liked: boolean
   onLike: () => void
   pool: Car[]
+  onImageError?: (carId: string) => void
 }) {
   const { formatPrice, language } = useSettings()
   const [expanded, setExpanded] = useState(false)
   const [imgLoaded, setImgLoaded] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
-  useEffect(() => { if (imgRef.current?.complete) setImgLoaded(true) }, [])
+  useEffect(() => {
+    if (imgRef.current?.complete) {
+      if (imgRef.current.naturalWidth === 0) onImageError?.(car.id)
+      else setImgLoaded(true)
+    }
+  }, [car.id, onImageError])
   const rating = useMemo(() => computeCardRating(car, pool), [car, pool])
 
   return (
@@ -711,6 +729,7 @@ const CarListItem = memo(function CarListItem({
               className={`h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] ${imgLoaded ? "opacity-100" : "opacity-0"}`}
               loading="lazy"
               onLoad={() => setImgLoaded(true)}
+              onError={() => onImageError?.(car.id)}
             />
           )}
           {/* Badges on image */}
@@ -1122,6 +1141,18 @@ export default function InventoryCatalog({
   const [selTrans, setSelTrans] = useState<string[]>([])
   const [selCond, setSelCond] = useState<string[]>([])
   const [selCountry, setSelCountry] = useState<string[]>([])
+  // Cars whose `image` URL failed to load (CDN expired the URL, or asset 404'd).
+  // Each card reports failures via onImageError; we filter them out of the visible
+  // list so users never see empty "black" placeholder cards.
+  const [brokenImageIds, setBrokenImageIds] = useState<Set<string>>(new Set())
+  const reportBrokenImage = useCallback((id: string) => {
+    setBrokenImageIds(prev => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+  }, [])
   // priceRange is in TURNKEY (final Ukrainian price) — consistent with what's displayed on cards.
   // Max 700k turnkey covers up to ~€505k raw EU (supercars).
   const [priceRange, setPriceRange] = useState<[number, number]>([0, 700000])
@@ -1201,13 +1232,16 @@ export default function InventoryCatalog({
       case "hp-desc":      result.sort((a, b) => b.horsepower - a.horsepower); break
     }
     return result
-  }, [selMakes, selModels, selBody, selFuel, selDrive, selTrans, selCond, selCountry, priceRange, yearRange, hpRange, mileageRange, searchQ, sortBy])
+  }, [allCars, selMakes, selModels, selBody, selFuel, selDrive, selTrans, selCond, selCountry, priceRange, yearRange, hpRange, mileageRange, searchQ, sortBy])
 
   // Reset pagination when filters/sort change
   const filteredKey = `${selMakes}${selModels}${selBody}${selFuel}${selDrive}${selTrans}${selCond}${selCountry}${priceRange}${yearRange}${hpRange}${mileageRange}${searchQ}${sortBy}`
   useEffect(() => { setVisibleCount(PAGE_SIZE) }, [filteredKey])
 
-  const withImage = useMemo(() => filtered.filter(car => car.image), [filtered])
+  const withImage = useMemo(
+    () => filtered.filter(car => car.image && !brokenImageIds.has(car.id)),
+    [filtered, brokenImageIds],
+  )
   const visible = useMemo(() => withImage.slice(0, visibleCount), [withImage, visibleCount])
 
   const activeCount = [selMakes, selModels, selBody, selFuel, selDrive, selTrans, selCond, selCountry].filter(a => a.length > 0).length
@@ -1416,6 +1450,7 @@ export default function InventoryCatalog({
                     liked={likes.has(car.id)}
                     onLike={() => toggleLike(car.id)}
                     pool={allCars}
+                    onImageError={reportBrokenImage}
                   />
                 ))}
               </div>
@@ -1441,6 +1476,7 @@ export default function InventoryCatalog({
                     liked={likes.has(car.id)}
                     onLike={() => toggleLike(car.id)}
                     pool={allCars}
+                    onImageError={reportBrokenImage}
                   />
                 ))}
               </div>
