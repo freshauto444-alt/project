@@ -1,6 +1,6 @@
 // lib/cars.ts
 import { createClient } from "@/lib/supabase/server"
-import { mapDbCar, type Car } from "@/lib/data"
+import { mapDbCar, cars as seedCars, type Car } from "@/lib/data"
 
 // Fast-fail wrapper — Supabase SDK's default fetch has no timeout, so a
 // DNS-failed project (or unreachable DB) hangs server-side rendering for 15-30s.
@@ -32,27 +32,35 @@ function formatDbError(err: unknown): string | null {
   return parts.filter(Boolean).join(" · ") || "empty error object"
 }
 
-// Full catalog — everything with an image. Matches the home page query so
-// the catalog mirrors what users see on the front page (any source).
+// Company's own showroom inventory. Combines:
+//   1. Static seed cars from lib/data.ts (12 premium showcase units —
+//      Porsche, BMW, Mercedes, Lamborghini, Ferrari, McLaren). These are
+//      hardcoded today; future admin UI can replace this with DB rows.
+//   2. Any DB cars tagged source_type='stock' (when admin starts adding them).
 //
-// Historical note: previously this filtered by source_type='stock' OR
-// status='In Stock' on the assumption admin would tag manual inventory.
-// In practice no stock is tagged yet, leaving the page empty while the DB
-// holds 1700+ parser-feed cars. The split now is:
-//   • /catalog → full pool (this)
-//   • /order   → parser_hot / parser_featured only, paginated
+// Parser-feed cars (parser_hot / parser_featured) are intentionally excluded
+// here — they belong on /order. The split:
+//   • /catalog → showroom inventory (this)
+//   • /order   → parser feed, server-paginated
 export async function getStockCars(): Promise<Car[]> {
+  // Always include hardcoded showroom cars — these are the curated showcase.
+  const showcase = seedCars.filter(c => c.image)
+
+  // Try to enrich with any DB-tagged stock cars; fall back gracefully if DB
+  // is unreachable or the env is missing.
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-    console.error("[cars] getStockCars: missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY")
-    return []
+    console.warn("[cars] getStockCars: NEXT_PUBLIC_SUPABASE_* missing — returning showcase only")
+    return showcase
   }
-  return withTimeout(
+
+  const dbStock = await withTimeout(
     (async () => {
       try {
         const supabase = await createClient()
         const { data, error } = await supabase
           .from("cars")
           .select("*")
+          .eq("source_type", "stock")
           .not("image", "is", null)
           .order("price", { ascending: true })
           .limit(200)
@@ -60,21 +68,25 @@ export async function getStockCars(): Promise<Car[]> {
         if (error) {
           const formatted = formatDbError(error)
           if (formatted) console.warn(`[cars] getStockCars: ${formatted}`)
-          return []
+          return [] as Car[]
         }
-
-        const cars = (data ?? []).map(mapDbCar).filter(c => c.image)
-        console.log(`[cars] getStockCars: ${cars.length} cars (raw rows: ${data?.length ?? 0})`)
-        return cars
+        return (data ?? []).map(mapDbCar).filter(c => c.image)
       } catch (err) {
         const formatted = formatDbError(err)
         if (formatted) console.warn(`[cars] getStockCars threw: ${formatted}`)
-        return []
+        return [] as Car[]
       }
     })(),
     3000,
     [] as Car[],
   )
+
+  // Dedupe: DB cars take precedence over seed if same id (shouldn't happen
+  // since seed ids are "1".."12", but safety-net).
+  const seenIds = new Set(dbStock.map(c => c.id))
+  const merged = [...dbStock, ...showcase.filter(c => !seenIds.has(c.id))]
+  console.log(`[cars] getStockCars: ${merged.length} cars (db: ${dbStock.length}, showcase: ${showcase.length})`)
+  return merged
 }
 
 /**
