@@ -32,12 +32,16 @@ function formatDbError(err: unknown): string | null {
   return parts.filter(Boolean).join(" · ") || "empty error object"
 }
 
-// Cars in company's own inventory.
-//   • Primary: source_type = "stock" — manually entered by admin / imported
-//   • Fallback: any car with status = "In Stock" (covers cars without explicit
-//     source_type = "stock" but marked as available — common when migrating data)
+// Full catalog — everything with an image. Matches the home page query so
+// the catalog mirrors what users see on the front page (any source).
+//
+// Historical note: previously this filtered by source_type='stock' OR
+// status='In Stock' on the assumption admin would tag manual inventory.
+// In practice no stock is tagged yet, leaving the page empty while the DB
+// holds 1700+ parser-feed cars. The split now is:
+//   • /catalog → full pool (this)
+//   • /order   → parser_hot / parser_featured only, paginated
 export async function getStockCars(): Promise<Car[]> {
-  // Check env first — fail loud rather than silently return [] on misconfigured deploys
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     console.error("[cars] getStockCars: missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY")
     return []
@@ -49,9 +53,9 @@ export async function getStockCars(): Promise<Car[]> {
         const { data, error } = await supabase
           .from("cars")
           .select("*")
-          .or("source_type.eq.stock,status.eq.In Stock")
           .not("image", "is", null)
           .order("price", { ascending: true })
+          .limit(200)
 
         if (error) {
           const formatted = formatDbError(error)
