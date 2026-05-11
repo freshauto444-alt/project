@@ -1073,6 +1073,9 @@ function ShowMoreButton({
     ? Math.max(0, totalRemote - visibleCount)
     : visibleRemaining
 
+  // Suppress unused-warning — kept for future use if we re-introduce counts.
+  void totalRemaining
+
   if (!clientHasMore && !serverHasMore) return null
 
   const handleClick = async () => {
@@ -1095,9 +1098,7 @@ function ShowMoreButton({
       >
         {loadingMore
           ? (language === "uk" ? "Завантаження…" : "Loading…")
-          : t("catalog.showMoreWithRemaining", language, {
-              remaining: totalRemaining,
-            })}
+          : (language === "uk" ? "Показати більше" : "Show more")}
       </button>
     </div>
   )

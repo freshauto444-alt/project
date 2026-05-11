@@ -129,19 +129,19 @@ export async function getFeaturedOrderCars(
     (async () => {
       try {
         const supabase = await createClient()
-        // Fetch a wider pool than `limit` so client-side ranking by value-score
-        // returns the best in the requested page slice. Capped at 200 per request.
-        const fetchLimit = Math.min(200, offset + limit + 50)
-        // Note: expires_at filter removed. Parser cars naturally rotate as the
-        // worker upserts fresh batches; old rows are pruned by cleanup_expired
-        // server-side. Filtering here also masks data when the cron has not run
-        // recently, so the page would appear empty while the table has 1700+ rows.
+        // Server-side pagination via .range() — fetches exactly `limit` rows
+        // per request instead of pulling a 200-row pool and slicing in memory.
+        // This dodges Supabase's 1MB response cap (cars with 30+ photos in
+        // their gallery weigh ~10KB each, so 200 rows can exceed the limit
+        // and silently truncate, hiding heavy-photo cars from the listing).
+        // Ordering by price keeps pagination stable across requests.
         const { data, error, count } = await supabase
           .from("cars")
           .select("*", { count: "exact" })
           .in("source_type", ["parser_hot", "parser_featured"])
           .not("image", "is", null)
-          .limit(fetchLimit)
+          .order("price", { ascending: true, nullsFirst: false })
+          .range(offset, offset + limit - 1)
 
         if (error) {
           const formatted = formatDbError(error)
@@ -149,13 +149,11 @@ export async function getFeaturedOrderCars(
           return { cars: [] as Car[], total: 0 }
         }
 
-        const all = (data ?? []).map(mapDbCar).filter(c => c.image)
-        all.sort((a, b) => calcValueScore(b) - calcValueScore(a))
-        const sliced = all.slice(offset, offset + limit)
-        console.log(`[cars] getFeaturedOrderCars(offset=${offset}, limit=${limit}): ${sliced.length} returned (pool: ${all.length}, count: ${count ?? "?"})`)
+        const cars = (data ?? []).map(mapDbCar).filter(c => c.image)
+        console.log(`[cars] getFeaturedOrderCars(offset=${offset}, limit=${limit}): ${cars.length} returned (count: ${count ?? "?"})`)
         return {
-          cars: sliced,
-          total: count ?? all.length,
+          cars,
+          total: count ?? 0,
         }
       } catch (err) {
         const formatted = formatDbError(err)
