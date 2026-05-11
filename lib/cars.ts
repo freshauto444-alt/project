@@ -154,7 +154,9 @@ export async function getFeaturedOrderCars(
         const { data, error, count } = await supabase
           .from("cars")
           .select("*", { count: "exact" })
-          .in("source_type", ["parser_hot", "parser_featured"])
+          // parser_hot/featured = curated cron batch (every 6h)
+          // parser_search = ad-hoc user-search results (auto-persisted, 48h TTL)
+          .in("source_type", ["parser_hot", "parser_featured", "parser_search"])
           .not("image", "is", null)
           .order("price", { ascending: true, nullsFirst: false })
           .range(offset, offset + limit - 1)
