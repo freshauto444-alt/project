@@ -388,7 +388,13 @@ model_search = назва моделі lowercase, БЕЗ префіксу мар
                 textAccum += event.delta.text
                 const { complete, remaining } = extractCompleteSuggestions(textAccum)
                 textAccum = remaining
-                for (const rawSugg of complete.slice(sentCount)) {
+                // `complete` contains ONLY newly-parsed objects on this call
+                // (textAccum was just stripped of their bytes). Iterate the
+                // whole array — do NOT .slice(sentCount), because sentCount
+                // counts globally across calls and would always skip the
+                // 2nd+ suggestion. Cap at 3 to match the system-prompt count.
+                for (const rawSugg of complete) {
+                  if (sentCount >= 3) break
                   if (rawSugg && typeof rawSugg === "object" && rawSugg.make) {
                     const mapped = mapRawSuggestion(rawSugg, prefs)
                     controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: mapped }))
