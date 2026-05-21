@@ -1490,7 +1490,7 @@ function SuggestionsScreen({
         </div>
       )}
 
-      {loading ? (
+      {loading && suggestions.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-12">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-primary" />
           <p className="text-sm text-white/40">AI аналізує ваші побажання...</p>
@@ -1506,12 +1506,19 @@ function SuggestionsScreen({
               loading={searchingIndex === i}
             />
           ))}
-          {suggestions.length > 0 && approvedIndices.size === 0 && (
+          {loading && suggestions.length > 0 && (
+            <div className="flex items-center justify-center gap-2.5 rounded-2xl border border-dashed border-white/10 py-5 text-sm text-white/40">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/10 border-t-primary" />
+              <span>AI підбирає ще варіанти…</span>
+            </div>
+          )}
+          {!loading && suggestions.length > 0 && approvedIndices.size === 0 && (
             <button
               onClick={onSearchAll}
-              className="mt-2 rounded-xl border border-border py-3 text-sm text-white/40 hover:border-primary/20 hover:text-white/60 transition-all"
+              className="mt-3 flex items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/[0.08] py-3.5 text-sm font-semibold text-primary hover:bg-primary/[0.14] hover:border-primary/60 transition-all cursor-pointer"
             >
-              Або шукати за всіма параметрами без уточнення
+              <Search className="h-4 w-4" />
+              Шукати за всіма параметрами без уточнення
             </button>
           )}
         </div>
@@ -2303,7 +2310,9 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
             if (event.type === "suggestion" && event.suggestion) {
               arrived.push(event.suggestion as Suggestion)
               setSuggestions([...arrived])
-              setLoadingSuggestions(false)
+              // Keep loading=true until the 'done' event — so the UI can show a
+              // "loading more…" indicator under the partial list and the user
+              // sees that more suggestions are still streaming in.
             } else if (event.type === "fallback" && event.fallback === "ai_unavailable") {
               setAiUnavailable(true)
               if (!hasFormFilters) {
