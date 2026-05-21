@@ -87,6 +87,34 @@ const BRAND_ALIASES: Record<string, string> = {
   "лексус": "Lexus", "субару": "Subaru", "мазда": "Mazda",
   "нісан": "Nissan", "ніссан": "Nissan", "альфа": "Alfa Romeo",
   "ситроен": "Citroen", "сітроен": "Citroen",
+  // Premium & exotic — Cyrillic aliases
+  "астон": "Aston Martin", "астон мартін": "Aston Martin", "астон мартин": "Aston Martin",
+  "бентлі": "Bentley", "бентли": "Bentley",
+  "феррарі": "Ferrari", "феррари": "Ferrari",
+  "ламборгіні": "Lamborghini", "ламборгини": "Lamborghini", "ламбо": "Lamborghini",
+  "мазераті": "Maserati", "мазерати": "Maserati",
+  "роллс-ройс": "Rolls-Royce", "роллс ройс": "Rolls-Royce", "ролс": "Rolls-Royce",
+  "інфініті": "Infiniti", "инфинити": "Infiniti", "інфініти": "Infiniti",
+  "акура": "Acura",
+  "смарт": "Smart",
+  "абарт": "Abarth",
+  "альпін": "Alpine", "альпин": "Alpine",
+  "купра": "Cupra",
+  "ленд ровер": "Land Rover", "ленд-ровер": "Land Rover", "ровер": "Land Rover",
+  "ягуар": "Jaguar",
+  "мітсубісі": "Mitsubishi", "мицубиси": "Mitsubishi", "мітсу": "Mitsubishi",
+  "сузукі": "Suzuki", "сузуки": "Suzuki",
+  "дачія": "Dacia", "дачия": "Dacia",
+  "фіат": "Fiat", "фиат": "Fiat",
+  "дженезіс": "Genesis", "дженезис": "Genesis",
+  "крайслер": "Chrysler",
+  "додж": "Dodge",
+  "сеат": "SEAT", "сіат": "SEAT",
+  "сааб": "Saab",
+  "хонда": "Honda",
+  "міні": "MINI", "мини": "MINI",
+  "джип": "Jeep",
+  "дс": "DS Automobiles", "ds": "DS Automobiles",
 }
 
 function normalizeBrand(raw: string): string {
@@ -642,7 +670,10 @@ ${prevContext}
     if (!match) return previous ?? empty
     const parsed = JSON.parse(match[0])
 
-    // Normalize brands + validate against known brands (guard against hallucination)
+    // Normalize brands + validate against known brands (guard against hallucination).
+    // Keep this in sync with regexFallbackExtract's KNOWN_BRANDS — otherwise an
+    // exotic brand like "Aston Martin" gets parsed correctly by Claude but
+    // silently dropped here, leaving the parser URL without a make filter.
     const _KNOWN = new Set([
       "BMW", "Audi", "Mercedes-Benz", "Volkswagen", "Volvo", "Toyota",
       "Honda", "Mazda", "Skoda", "SEAT", "Cupra", "Ford", "Opel",
@@ -650,6 +681,10 @@ ${prevContext}
       "Mitsubishi", "Subaru", "Lexus", "Porsche", "Tesla", "MINI",
       "Jeep", "Land Rover", "Jaguar", "Alfa Romeo", "Saab", "Suzuki",
       "Dacia", "Fiat", "Genesis", "Chrysler", "Dodge",
+      // Premium / exotic
+      "Aston Martin", "Bentley", "Ferrari", "Lamborghini", "Maserati",
+      "Rolls-Royce", "Infiniti", "Acura", "Smart", "Abarth", "Alpine",
+      "DS Automobiles",
     ])
     const pairs: CarPair[] = Array.isArray(parsed.pairs)
       ? parsed.pairs
@@ -779,6 +814,16 @@ function regexFallbackExtract(messages: ChatMessage[], previous: ChatPreferences
       if (b === "vw") detectedMake = "Volkswagen"
       if (b === "mercedes") detectedMake = "Mercedes-Benz"
       break
+    }
+  }
+  // Cyrillic / UA-RU brand spellings — pull from BRAND_ALIASES so the regex
+  // fallback recognises "астон мартін", "бентлі", "інфініті" etc. on its own
+  // (Claude path also uses BRAND_ALIASES, but if Claude is unreachable we
+  // still want the search URL to carry the right make).
+  if (!detectedMake) {
+    const aliasKeys = Object.keys(BRAND_ALIASES).sort((a, b) => b.length - a.length)
+    for (const k of aliasKeys) {
+      if (text.includes(k)) { detectedMake = BRAND_ALIASES[k]; break }
     }
   }
 
