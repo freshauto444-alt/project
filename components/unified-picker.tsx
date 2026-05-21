@@ -2424,12 +2424,37 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
       const data = await res.json()
       const newCars = (data.cars ?? []).map(mapApiCar)
 
-      // Prepend new cars so the latest pick lands at the top of the list.
-      // Previously we appended (old + new) which buried fresh BMW results
-      // under stale Audi after the user changed their selection.
+      // Merge new + old, with two safeguards:
+      //   1. New cars go FIRST so the latest pick tops the list.
+      //   2. Old cars are kept only if they still match the NEW pick's
+      //      budget + year envelope. Without this, switching from a 40-60k
+      //      suggestion to an 80-100k one left 40k cars below the new
+      //      80k+ results — confusing for the user.
+      const sp = suggestion.searchParams
+      const newBudgetMin = sp.budget_min ?? null
+      const newBudgetMax = sp.budget_max ?? null
+      const newYearFrom = sp.year_from ?? null
+      const newYearTo = sp.year_to ?? null
+
+      const matchesNewCriteria = (c: CarType): boolean => {
+        const price = (c as any).price ?? c.price
+        if (typeof price === "number") {
+          if (newBudgetMin != null && price < newBudgetMin) return false
+          if (newBudgetMax != null && price > newBudgetMax) return false
+        }
+        const year = (c as any).year ?? c.year
+        if (typeof year === "number") {
+          if (newYearFrom != null && year < newYearFrom) return false
+          if (newYearTo   != null && year > newYearTo)   return false
+        }
+        return true
+      }
+
       setResults(prev => {
         const newUrls = new Set(newCars.map((c: CarType) => c.sourceUrl || (c as any).source_url))
-        const keptOld = prev.filter(c => !newUrls.has(c.sourceUrl || (c as any).source_url))
+        const keptOld = prev
+          .filter(c => !newUrls.has(c.sourceUrl || (c as any).source_url))
+          .filter(matchesNewCriteria)
         return [...newCars, ...keptOld]
       })
 
