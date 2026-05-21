@@ -860,6 +860,10 @@ async function callParserInstant(
     params.set("limit", "50")
 
     const url = `${PARSER_URL}/search/instant?${params}`
+    // Diagnostic — log every parser call so you can correlate "0 cars found"
+    // red messages with the exact URL that was hit. Visible in Vercel runtime
+    // logs under `[picker] parser →`.
+    console.log(`[picker] parser → ${url.replace(PARSER_URL, "")}`)
     const res = await fetch(url, {
       headers: PARSER_KEY ? { "x-api-key": PARSER_KEY } : {},
     })
