@@ -1372,19 +1372,6 @@ function SuggestionCard({
               <span className="rounded-full bg-white/[0.06] px-2.5 py-0.5 text-xs text-white/50">
                 {suggestion.yearRange}
               </span>
-              <span className="rounded-full bg-white/[0.06] px-2.5 py-0.5 text-xs text-primary/70">
-                {suggestion.priceRange} EUR
-              </span>
-              {suggestion.budgetFit === "over" && (suggestion.overBy ?? 0) > 0 && (
-                <span className="rounded-full border border-amber-500/40 bg-amber-500/[0.08] px-2.5 py-0.5 text-xs text-amber-400/90">
-                  +€{(suggestion.overBy ?? 0).toLocaleString()} над бюджетом
-                </span>
-              )}
-              {suggestion.budgetFit === "tight" && (
-                <span className="rounded-full border border-yellow-500/30 bg-yellow-500/[0.06] px-2.5 py-0.5 text-xs text-yellow-400/80">
-                  На межі бюджету
-                </span>
-              )}
             </div>
           </div>
           <button
