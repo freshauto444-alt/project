@@ -148,26 +148,43 @@ const PURPOSE_PRESETS: Record<string, PurposePreset> = {
 
 function extractSearchParams(answers: Answer[]) {
   const byId = Object.fromEntries(answers.map(a => [a.questionId, a]))
-  const budgetStr = byId.budget?.selected[0] ?? byId.budget?.custom ?? ""
-  // Normalize: strip all whitespace/thin spaces/non-breaking spaces, handle European comma
   const cleanNum = (s: string) => parseInt(s.replace(/[\s\u00a0\u2009,.]/g, "").replace(/\D/g, ""))
-  const rangeMatch = budgetStr.match(/([\d\s\u00a0\u2009,.]+)\s*[–\-—]\s*([\d\s\u00a0\u2009,.]+)/)
   let budgetMin: number | null = null
   let budgetMax: number | null = null
-  if (rangeMatch) {
-    const min = cleanNum(rangeMatch[1])
-    const max = cleanNum(rangeMatch[2])
-    if (!isNaN(min) && min > 0) budgetMin = min
-    if (!isNaN(max) && max > 0) budgetMax = max
-  } else if (/понад|більше|від|more|from/i.test(budgetStr)) {
-    const m = budgetStr.match(/([\d\s\u00a0,.]+)/)
-    if (m) { const v = cleanNum(m[1]); if (!isNaN(v) && v > 0) budgetMin = v }
-  } else if (/до|менше|less|under|max/i.test(budgetStr)) {
-    const m = budgetStr.match(/([\d\s\u00a0,.]+)/)
-    if (m) { const v = cleanNum(m[1]); if (!isNaN(v) && v > 0) budgetMax = v }
-  } else {
-    const plain = cleanNum(budgetStr)
-    if (!isNaN(plain) && plain > 0) budgetMax = plain
+
+  // Picker stores budget as two separate slots: selected[0]=from, selected[1]=to.
+  // PRIMARY path — read both independently. Previously we only looked at
+  // selected[0] and parsed a range string from it, which meant a "до 40k"
+  // filter (which lives in selected[1]) was silently dropped.
+  const fromSlot = byId.budget?.selected[0] ?? ""
+  const toSlot = byId.budget?.selected[1] ?? ""
+  if (fromSlot || toSlot) {
+    const fromVal = cleanNum(fromSlot)
+    const toVal = cleanNum(toSlot)
+    if (!isNaN(fromVal) && fromVal > 0) budgetMin = fromVal
+    if (!isNaN(toVal) && toVal > 0) budgetMax = toVal
+  }
+
+  // FALLBACK — legacy single-string budget ("30000-50000", "до 40000", "понад 50k")
+  // for older payload shapes. Only kicks in if the two-slot read produced nothing.
+  if (budgetMin === null && budgetMax === null) {
+    const budgetStr = byId.budget?.custom ?? byId.budget?.selected[0] ?? ""
+    const rangeMatch = budgetStr.match(/([\d\s\u00a0\u2009,.]+)\s*[–\-—]\s*([\d\s\u00a0\u2009,.]+)/)
+    if (rangeMatch) {
+      const min = cleanNum(rangeMatch[1])
+      const max = cleanNum(rangeMatch[2])
+      if (!isNaN(min) && min > 0) budgetMin = min
+      if (!isNaN(max) && max > 0) budgetMax = max
+    } else if (/понад|більше|від|more|from/i.test(budgetStr)) {
+      const m = budgetStr.match(/([\d\s\u00a0,.]+)/)
+      if (m) { const v = cleanNum(m[1]); if (!isNaN(v) && v > 0) budgetMin = v }
+    } else if (/до|менше|less|under|max/i.test(budgetStr)) {
+      const m = budgetStr.match(/([\d\s\u00a0,.]+)/)
+      if (m) { const v = cleanNum(m[1]); if (!isNaN(v) && v > 0) budgetMax = v }
+    } else {
+      const plain = cleanNum(budgetStr)
+      if (!isNaN(plain) && plain > 0) budgetMax = plain
+    }
   }
   const yearFromStr = byId.year?.selected[0] ?? byId.year?.custom ?? ""
   const yearToStr = byId.year?.selected[1] ?? ""

@@ -2424,11 +2424,13 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
       const data = await res.json()
       const newCars = (data.cars ?? []).map(mapApiCar)
 
-      // Append to results
+      // Prepend new cars so the latest pick lands at the top of the list.
+      // Previously we appended (old + new) which buried fresh BMW results
+      // under stale Audi after the user changed their selection.
       setResults(prev => {
-        const existingUrls = new Set(prev.map(c => c.sourceUrl || (c as any).source_url))
-        const unique = newCars.filter((c: CarType) => !existingUrls.has(c.sourceUrl || (c as any).source_url))
-        return [...prev, ...unique]
+        const newUrls = new Set(newCars.map((c: CarType) => c.sourceUrl || (c as any).source_url))
+        const keptOld = prev.filter(c => !newUrls.has(c.sourceUrl || (c as any).source_url))
+        return [...newCars, ...keptOld]
       })
 
       if (newCars.length > 0) {
