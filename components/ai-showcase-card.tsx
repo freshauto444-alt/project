@@ -4,7 +4,7 @@ import { useRef, useState, useEffect } from "react"
 import Image from "next/image"
 import { useSettings } from "@/lib/settings-context"
 import { calcTotalCost } from "@/lib/constants"
-import type { Car } from "@/lib/data"
+import { type Car, formatCarTitle } from "@/lib/data"
 
 interface AiShowcaseCardProps {
   car: Car
@@ -77,7 +77,7 @@ export default function AiShowcaseCard({ car, onSelect }: AiShowcaseCardProps) {
               className="text-xl sm:text-2xl lg:text-3xl font-extrabold tracking-tight text-white mt-0.5"
               style={{ letterSpacing: "-0.02em" }}
             >
-              {car.make} {car.model}
+              {formatCarTitle(car.make, car.model)}
             </h3>
           </div>
           <div className="text-right shrink-0">

@@ -692,3 +692,31 @@ export function formatPrice(price: number): string {
 export function formatMileage(mileage: number): string {
   return new Intl.NumberFormat("uk-UA").format(mileage) + " km"
 }
+
+/**
+ * Format "Make Model" for display, suppressing the make when it would
+ * read redundantly. AS24 returns model="Range Rover" for the whole Land
+ * Rover Range Rover family (Vogue, HSE, Autobiography, P530, D350…), so
+ * "Land Rover Range Rover" duplicates the iconic name with no
+ * additional information.
+ *
+ * Currently scoped to Land Rover → Range Rover only. Other Land Rover
+ * models (Defender, Discovery, Freelander) keep the "Land Rover" prefix
+ * because their model name needs the brand context.
+ */
+export function formatCarTitle(
+  make: string | null | undefined,
+  model: string | null | undefined,
+): string {
+  const m = (make ?? "").trim()
+  const mod = (model ?? "").trim()
+  if (!m) return mod
+  if (!mod) return m
+  // Land Rover Range Rover → just "Range Rover (+ trim if present)"
+  if (m.toLowerCase() === "land rover" && /^range rover\b/i.test(mod)) {
+    return mod
+  }
+  // If model already opens with the make, don't duplicate
+  if (mod.toLowerCase().startsWith(m.toLowerCase() + " ")) return mod
+  return `${m} ${mod}`
+}

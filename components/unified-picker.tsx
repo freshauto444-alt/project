@@ -8,7 +8,7 @@ import {
   SlidersHorizontal, Gauge, Palette, Armchair, DoorOpen, Users,
   Building2, Plane, Briefcase, Wrench, TrendingUp, MessageSquare,
 } from "lucide-react"
-import type { Car as CarType } from "@/lib/data"
+import { type Car as CarType, formatCarTitle } from "@/lib/data"
 import { calcTotalCost, SOURCE_SITES, ratePriceVsMarket, PRICE_RATING_CONFIG } from "@/lib/constants"
 import { t, tOpt, tp, type Language } from "@/lib/i18n"
 import { useSettings } from "@/lib/settings-context"
@@ -1068,7 +1068,7 @@ function ResultCard({ car, onClick, allCars }: { car: CarType; onClick: () => vo
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent" />
         <div className="absolute bottom-2.5 left-3 text-xs font-semibold text-white drop-shadow">
-          {car.year} {car.make} {car.model}
+          {car.year} {formatCarTitle(car.make, car.model)}
         </div>
         {/* Source badge */}
         {source && (
@@ -1366,7 +1366,7 @@ function SuggestionCard({
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1">
             <h3 className="text-lg font-semibold text-foreground">
-              {suggestion.make} {suggestion.model}
+              {formatCarTitle(suggestion.make, suggestion.model)}
             </h3>
             <div className="mt-1 flex flex-wrap gap-2">
               <span className="rounded-full bg-white/[0.06] px-2.5 py-0.5 text-xs text-white/50">

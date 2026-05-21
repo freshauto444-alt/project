@@ -4,7 +4,7 @@ import { useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { ArrowRight, Gauge, Fuel, MapPin, Zap, Heart, Calendar } from "lucide-react"
-import { cars, type Car, formatMileage } from "@/lib/data"
+import { cars, type Car, formatMileage, formatCarTitle } from "@/lib/data"
 import { useSettings } from "@/lib/settings-context"
 import { useSavedCars } from "@/hooks/use-saved-cars"
 import { t } from "@/lib/i18n"
@@ -66,7 +66,7 @@ function Card({ car, onSelect, index }: { car: Car; onSelect: (car: Car) => void
         {/* Title on image */}
         <div className="absolute bottom-3 left-3 right-3">
           <h3 className="text-lg font-bold text-white tracking-tight drop-shadow-lg leading-tight">
-            {car.make} {car.model}
+            {formatCarTitle(car.make, car.model)}
           </h3>
           <div className="flex items-center gap-2 mt-1">
             <span className="flex items-center gap-1 text-xs text-white/70">

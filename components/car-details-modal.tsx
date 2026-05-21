@@ -9,7 +9,7 @@ import {
   Armchair, Car, Lock, Wifi, Eye, Phone, MessageCircle, FileText,
   TrendingUp, Download, ExternalLink,
 } from "lucide-react"
-import { type Car as CarType, formatMileage } from "@/lib/data"
+import { type Car as CarType, formatMileage, formatCarTitle } from "@/lib/data"
 import { useSettings } from "@/lib/settings-context"
 import { t } from "@/lib/i18n"
 
@@ -390,7 +390,7 @@ function TradeInSection({ car }: { car: CarType }) {
   return (
     <div className="flex flex-col gap-5">
       <p className="text-sm text-muted-foreground leading-relaxed">
-        {t("modal.tradeInDesc", language)} {car.make} {car.model}. {t("modal.tradeInEnter", language)}
+        {t("modal.tradeInDesc", language)} {formatCarTitle(car.make, car.model)}. {t("modal.tradeInEnter", language)}
       </p>
       <div>
         <div className="flex items-center justify-between mb-2">
@@ -617,7 +617,7 @@ export default function CarDetailsModal({ car, onClose, onCheckout }: CarDetails
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] flex-shrink-0">
             <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-foreground truncate">{car.year} {car.make} {car.model}</h2>
+              <h2 className="text-lg font-semibold text-foreground truncate">{car.year} {formatCarTitle(car.make, car.model)}</h2>
               <div className="flex items-center gap-2.5 mt-0.5 flex-wrap">
                 {car.vin && <p className="text-[10px] text-muted-foreground font-mono">VIN: {car.vin}</p>}
                 <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-md ${

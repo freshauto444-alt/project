@@ -10,7 +10,7 @@ import {
 import {
   cars as allCars, type Car, makes, modelsByMake, bodyTypes, bodyTypesMap,
   fuelTypes, fuelTypesMap, driveTypes, driveLabels, transmissionTypes,
-  conditionTypes, countries, formatMileage,
+  conditionTypes, countries, formatMileage, formatCarTitle,
 } from "@/lib/data"
 import { useSettings } from "@/lib/settings-context"
 import { calcTotalCost, ratePriceVsMarket, PRICE_RATING_CONFIG, lookupPriceGuide } from "@/lib/constants"
@@ -658,7 +658,7 @@ const CarCard = memo(function CarCard({
       <div className="flex flex-1 flex-col p-4 cursor-pointer" onClick={() => onSelect(car)}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-foreground truncate">{car.make} {car.model}</h3>
+            <h3 className="text-sm font-semibold text-foreground truncate">{formatCarTitle(car.make, car.model)}</h3>
             <p className="text-[11px] text-muted-foreground mt-0.5">{[car.year, car.engine, car.bodyTypeUa].filter(Boolean).join(" · ")}</p>
           </div>
           <div className="flex-shrink-0 text-right">
@@ -758,7 +758,7 @@ const CarListItem = memo(function CarListItem({
                 className="text-base sm:text-lg font-bold text-foreground hover:text-primary transition-colors cursor-pointer text-left"
                 style={{ letterSpacing: "-0.01em" }}
               >
-                {car.make} {car.model} {car.year}
+                {formatCarTitle(car.make, car.model)} {car.year}
               </button>
               <p className="text-xs text-muted-foreground mt-0.5">
                 {[car.engine, car.horsepower != null ? `${car.horsepower} ${t("common.hp", language)}` : null, car.bodyTypeUa, car.conditionUa].filter(Boolean).join(" · ")}
@@ -951,7 +951,7 @@ function ImageLightbox({ images, startIndex, car, onClose }: {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-black/80 backdrop-blur-sm flex-shrink-0">
         <div className="min-w-0">
-          <span className="text-sm font-semibold text-white truncate">{car.year} {car.make} {car.model}</span>
+          <span className="text-sm font-semibold text-white truncate">{car.year} {formatCarTitle(car.make, car.model)}</span>
           <span className="ml-3 text-xs text-white/40 tabular-nums font-mono">{idx + 1} / {images.length}</span>
         </div>
         <button
