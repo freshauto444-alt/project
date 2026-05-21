@@ -1266,6 +1266,7 @@ export async function POST(req: Request) {
     if (!chat.fuel && base.fuel) chat.fuel = base.fuel
     if (!chat.body_type && base.body_type) chat.body_type = base.body_type
     if (!chat.year_from && base.year_from) chat.year_from = base.year_from
+    if (!chat.year_to && base.year_to) chat.year_to = base.year_to
     if (!chat.transmission && base.transmission) chat.transmission = base.transmission
     if (!chat.drive && base.drive) chat.drive = base.drive
     // Purpose presets → merge into chat if not overridden by explicit chat values
