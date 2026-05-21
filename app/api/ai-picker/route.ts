@@ -1054,6 +1054,22 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
             return false
           }
 
+          // Mercedes class slug ("c-klasse", "e-klasse", "gla-klasse", "cla-class"…).
+          // Parser hits AS24/Bytbil with the class slug but returned cars come back
+          // with the concrete designation ("C 300 T", "GLA 200", "CLA 180"), which
+          // does NOT contain the literal "klasse"/"class" substring — so the generic
+          // includes() check below would drop every Mercedes result. Match on the
+          // class prefix followed by a space/dash/digit boundary so "c-klasse"
+          // accepts "C 300 T" but not "CLA 200", and "cla-klasse" accepts "CLA 200"
+          // but not "C 300 T".
+          const mbClass = reqModel.match(/^([a-z]{1,3})[\s-]?(?:klasse|class)$/i)
+          if (mbClass) {
+            const cls = mbClass[1].toLowerCase()
+            const carTrimmed = carModel.trim().toLowerCase()
+            if (new RegExp(`^${cls}(?:[\\s-]|\\d)`, "i").test(carTrimmed)) return true
+            return false
+          }
+
           // Non-numeric models: "a6" matches "A6", "A6 Avant", "A6 Allroad"
           const reqNorm = reqModel.replace(/[^a-z0-9]/g, "")
           const carNorm = carModel.replace(/[^a-z0-9]/g, "")
