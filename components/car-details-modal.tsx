@@ -455,22 +455,22 @@ function VehicleHistory({ car }: { car: CarType }) {
           </div>
           <div className="text-[10px] text-muted-foreground tabular-nums">{formatMileage(car.mileage)}</div>
         </div>
-        <div className="flex items-end gap-1 h-20">
+        <div className="flex items-end gap-1 h-24 sm:h-20">
           {car.history.map((entry, i) => {
             const max = Math.max(...car.history.map(h => h.mileage), 1)
             const h = Math.max((entry.mileage / max) * 100, 4)
             return (
               <div key={i} className="flex-1 rounded-t bg-primary/20 hover:bg-primary/30 transition-colors relative group cursor-default" style={{ height: `${h}%` }}>
-                <div className="absolute -top-7 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-[9px] text-primary font-mono whitespace-nowrap bg-background/90 px-1.5 py-0.5 rounded-md backdrop-blur-sm border border-white/[0.06]">
+                <div className="absolute -top-7 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-primary font-mono whitespace-nowrap bg-background/90 px-1.5 py-0.5 rounded-md backdrop-blur-sm border border-white/[0.06]">
                   {entry.mileage.toLocaleString("uk-UA")} km
                 </div>
               </div>
             )
           })}
         </div>
-        <div className="flex gap-1 mt-1.5">
+        <div className="hidden gap-1 mt-1.5 sm:flex">
           {car.history.map((entry, i) => (
-            <div key={i} className="flex-1 text-center text-[8px] text-muted-foreground/50 truncate">{entry.date}</div>
+            <div key={i} className="flex-1 text-center text-[10px] text-muted-foreground/50 truncate">{entry.date}</div>
           ))}
         </div>
       </div>
@@ -611,7 +611,7 @@ export default function CarDetailsModal({ car, onClose, onCheckout }: CarDetails
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.97, y: 12 }}
           transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
-          className="relative mx-auto my-4 flex h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-white/[0.06] bg-card shadow-2xl"
+          className="relative mx-auto flex h-[100dvh] w-full max-w-5xl flex-col overflow-hidden border-white/[0.06] bg-card shadow-2xl sm:my-4 sm:h-[calc(100dvh-2rem)] sm:rounded-3xl sm:border"
           onClick={e => e.stopPropagation()}
         >
           {/* Header */}
@@ -709,8 +709,8 @@ export default function CarDetailsModal({ car, onClose, onCheckout }: CarDetails
                       <div key={s.label} className="flex items-center gap-2.5 rounded-xl bg-secondary/30 px-3 py-2.5">
                         <s.icon className="h-3.5 w-3.5 text-muted-foreground/50 flex-shrink-0" />
                         <div className="min-w-0">
-                          <div className="text-[9px] text-muted-foreground uppercase tracking-wider">{s.label}</div>
-                          <div className="text-xs text-foreground truncate">{s.value}</div>
+                          <div className="text-[10px] sm:text-[9px] text-muted-foreground uppercase tracking-wider truncate">{s.label}</div>
+                          <div className="text-[13px] sm:text-xs text-foreground truncate">{s.value}</div>
                         </div>
                       </div>
                     ))}

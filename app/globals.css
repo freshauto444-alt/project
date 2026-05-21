@@ -402,3 +402,17 @@ header.navbar-hero-active .bg-foreground\/\[0\.06\] { background-color: rgba(255
 
 /* Prevent overscroll on modal panels */
 .overscroll-lock { overscroll-behavior: contain; }
+
+/*
+ * iOS Safari auto-zooms into any input whose font-size is < 16px on focus,
+ * which permanently shifts the layout off-screen on phones. Force a 16px
+ * minimum below the md breakpoint so phone users never trigger that zoom.
+ * Desktop keeps the original small text styling.
+ */
+@media (max-width: 767px) {
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}

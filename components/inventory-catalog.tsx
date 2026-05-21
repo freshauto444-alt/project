@@ -717,7 +717,7 @@ const CarListItem = memo(function CarListItem({
       <div className="flex flex-col sm:flex-row">
         {/* Image - consistent fixed size, clickable for gallery */}
         <div
-          className="relative w-full sm:w-[340px] flex-shrink-0 aspect-[16/9] overflow-hidden cursor-pointer group"
+          className="relative w-full sm:w-[260px] lg:w-[340px] flex-shrink-0 aspect-[16/9] overflow-hidden cursor-pointer group"
           onClick={() => onGallery(car, 0)}
         >
           {!imgLoaded && <div className="absolute inset-0 animate-pulse bg-white/[0.04]" />}
@@ -1017,7 +1017,7 @@ function ImageLightbox({ images, startIndex, car, onClose }: {
             <button
               key={i}
               onClick={() => setIdx(i)}
-              className={`flex-shrink-0 h-12 w-18 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
+              className={`flex-shrink-0 h-12 w-20 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
                 i === idx ? "border-white/70 opacity-100 scale-105" : "border-transparent opacity-30 hover:opacity-60"
               }`}
             >
@@ -1289,9 +1289,9 @@ export default function InventoryCatalog({
     <section id="catalog" className="min-h-screen w-full">
       {/* ── Sticky Toolbar ── */}
       <div className="sticky top-16 z-30 border-b border-border bg-background/80 backdrop-blur-xl">
-        <div className="flex items-center gap-3 px-4 py-3 lg:px-6">
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3 sm:gap-3 lg:px-6">
           {/* Search */}
-          <div className="relative flex-1 max-w-2xl">
+          <div className="relative flex-1 min-w-[200px] max-w-2xl">
             <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/40" />
             <input
               value={searchQ}

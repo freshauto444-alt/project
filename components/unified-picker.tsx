@@ -1363,9 +1363,9 @@ function SuggestionCard({
       }`}
     >
       <div className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold text-foreground">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-base font-semibold text-foreground sm:text-lg">
               {formatCarTitle(suggestion.make, suggestion.model)}
             </h3>
             <div className="mt-1 flex flex-wrap gap-2">
@@ -1392,7 +1392,7 @@ function SuggestionCard({
           <button
             onClick={onApprove}
             disabled={loading}
-            className={`shrink-0 rounded-xl px-4 py-2 text-sm font-medium transition-all ${
+            className={`w-full shrink-0 rounded-xl px-4 py-2.5 text-sm font-medium transition-all sm:w-auto sm:py-2 ${
               approved
                 ? "bg-primary text-black"
                 : "border border-border text-foreground/70 hover:border-primary/40 hover:text-foreground"
@@ -1717,29 +1717,35 @@ function AllFiltersForm({
     "Інвестиція": TrendingUp,
   }
 
-  // Count active filters so the "Clear all" chip only shows when something is set.
+  // Count active filters so the "Clear all" chip can render in a disabled state.
   const activeFilterCount = answers.reduce((n, a) => n + (a.selected.length > 0 || a.custom.trim().length > 0 ? 1 : 0), 0) + (freeText.trim() ? 1 : 0)
+  const hasActiveFilters = activeFilterCount > 0
 
   return (
     <div className="flex flex-col gap-5">
-      {/* ═══ TOP BAR — prominent "Clear all" button (user requested TOP placement) ═══ */}
-      {activeFilterCount > 0 && (
-        <div className="flex items-center justify-between rounded-2xl border border-border bg-card/50 px-4 py-2.5">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <SlidersHorizontal className="h-3.5 w-3.5 text-primary/60" />
-            <span className="font-medium">{t("picker.activeFilters", language)}: <span className="text-foreground">{activeFilterCount}</span></span>
-          </div>
-          <button
-            onClick={onClear}
-            type="button"
-            title={t("picker.clearAll", language)}
-            className="flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground hover:border-red-500/40 hover:bg-red-500/[0.06] hover:text-red-400 transition-all cursor-pointer"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            {t("picker.clearAll", language)}
-          </button>
+      {/* ═══ TOP BAR — always visible to prevent layout jump when filters toggle ═══ */}
+      <div className="flex items-center justify-between rounded-2xl border border-border bg-card/50 px-4 py-2.5">
+        <div className={`flex items-center gap-2 text-xs ${hasActiveFilters ? "text-muted-foreground" : "text-muted-foreground/50"}`}>
+          <SlidersHorizontal className={`h-3.5 w-3.5 ${hasActiveFilters ? "text-primary/60" : "text-muted-foreground/30"}`} />
+          <span className="font-medium">
+            {t("picker.activeFilters", language)}: <span className={hasActiveFilters ? "text-foreground" : "text-muted-foreground/50"}>{activeFilterCount}</span>
+          </span>
         </div>
-      )}
+        <button
+          onClick={onClear}
+          disabled={!hasActiveFilters}
+          type="button"
+          title={t("picker.clearAll", language)}
+          className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-medium transition-all ${
+            hasActiveFilters
+              ? "border-border bg-card text-muted-foreground hover:border-red-500/40 hover:bg-red-500/[0.06] hover:text-red-400 cursor-pointer"
+              : "border-border/40 bg-transparent text-muted-foreground/30 cursor-not-allowed"
+          }`}
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          {t("picker.clearAll", language)}
+        </button>
+      </div>
 
       {/* ═══ AI HERO — воронка: найширший вхід, текстом описати ═══ */}
       <div className="relative overflow-hidden rounded-3xl border border-primary/30 bg-gradient-to-br from-primary/[0.08] via-primary/[0.04] to-transparent p-5 sm:p-6">

@@ -65,7 +65,7 @@ export default function Navbar() {
           scrolled ? "glass-strong border-b border-border py-3 shadow-sm" : "bg-transparent py-5"
         }`}
       >
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 sm:px-6">
           <Link
             href="/"
             className="text-base font-extrabold tracking-tight transition-opacity hover:opacity-70 text-foreground"
@@ -198,10 +198,10 @@ export default function Navbar() {
 
           <button
             onClick={() => setMobileOpen(!mobileOpen)}
-            className="flex h-8 w-8 items-center justify-center md:hidden cursor-pointer text-foreground"
+            className="flex h-11 w-11 items-center justify-center md:hidden cursor-pointer text-foreground"
             aria-label="Меню"
           >
-            {mobileOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
       </header>
@@ -213,7 +213,7 @@ export default function Navbar() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-40 glass-strong pt-20 px-6 md:hidden"
+            className="fixed inset-0 z-40 glass-strong overflow-y-auto pt-20 px-4 pb-12 md:hidden sm:px-6"
           >
             <div className="flex flex-col gap-1 mt-4">
               {/* User info on mobile */}

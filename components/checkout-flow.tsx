@@ -131,7 +131,7 @@ export default function CheckoutFlow({ car, onClose }: CheckoutFlowProps) {
 
         {/* Car summary */}
         <div className="mb-6 flex items-center gap-4 rounded-xl border border-border bg-card p-3">
-          <div className="h-12 w-18 flex-shrink-0 overflow-hidden rounded-lg">
+          <div className="h-12 w-20 flex-shrink-0 overflow-hidden rounded-lg">
             {car.image && <img src={car.image} alt={`${car.make} ${car.model}`} crossOrigin="anonymous" className="h-full w-full object-cover" />}
           </div>
           <div className="flex-1 min-w-0">

@@ -144,7 +144,7 @@ export default function AuthPage({ onLogin, onBack }: AuthPageProps) {
   }
 
   return (
-    <section className="min-h-[calc(100vh-5rem)] flex items-center justify-center px-6 py-20">
+    <section className="min-h-[calc(100dvh-5rem)] flex items-center justify-center px-6 py-20">
       {/* Ambient bg glow */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
         <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 h-[500px] w-[500px] rounded-full bg-primary/[0.03] blur-[120px]" />

@@ -211,7 +211,7 @@ export default function Page() {
           <p className="text-base font-medium text-muted-foreground max-w-lg mx-auto leading-relaxed mb-14">
             {t("trust.subtitle", language)}
           </p>
-          <div className="grid grid-cols-2 gap-5 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
             {[
               { value: "2 400+", label: t("trust.stat1", language) },
               { value: "14", label: t("trust.stat2", language) },

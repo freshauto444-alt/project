@@ -99,7 +99,7 @@ function Card({ car, onSelect, index }: { car: Car; onSelect: (car: Car) => void
         </div>
 
         {/* Specs */}
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <Gauge className="h-3.5 w-3.5 text-muted-foreground/50" />
             {formatMileage(car.mileage)}

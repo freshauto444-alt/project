@@ -96,7 +96,7 @@ export default function HeroSection({ onExplore, onFinder }: HeroSectionProps) {
   return (
     <section
       ref={sectionRef}
-      className="relative h-screen w-full overflow-hidden"
+      className="relative h-[100dvh] w-full overflow-hidden"
       style={{ background: "#030303" }}
     >
       {/* Poster - ALWAYS visible underneath as safety net for loop gaps */}
@@ -126,8 +126,8 @@ export default function HeroSection({ onExplore, onFinder }: HeroSectionProps) {
               top: "50%",
               left: "50%",
               transform: "translate(-50%, -50%) scale(1.15)",
-              width: "max(177.78vh, 100vw)",
-              height: "max(56.25vw, 100vh)",
+              width: "max(177.78dvh, 100vw)",
+              height: "max(56.25vw, 100dvh)",
             }}
             loading="eager"
             onLoad={() => {
@@ -169,7 +169,7 @@ export default function HeroSection({ onExplore, onFinder }: HeroSectionProps) {
         <h1
           className="mt-5 font-extrabold tracking-tight leading-[1.02] text-balance"
           style={{
-            fontSize: "clamp(2.75rem, 7vw, 5.5rem)",
+            fontSize: "clamp(2.25rem, 7vw, 5.5rem)",
             color: "#FFFFFF",
             letterSpacing: "-0.03em",
           }}
@@ -192,7 +192,7 @@ export default function HeroSection({ onExplore, onFinder }: HeroSectionProps) {
           {/* Primary CTA - large glass pill with teal gradient + animated glow */}
           <button
             onClick={onExplore}
-            className="hero-cta-primary group relative overflow-hidden rounded-full px-14 py-5 sm:px-16 sm:py-6 font-extrabold text-lg sm:text-xl tracking-wide cursor-pointer transition-all duration-300 hover:scale-[1.04] active:scale-[0.97]"
+            className="hero-cta-primary group relative overflow-hidden rounded-full px-10 py-4 sm:px-16 sm:py-6 font-extrabold text-base sm:text-xl tracking-wide cursor-pointer transition-all duration-300 hover:scale-[1.04] active:scale-[0.97]"
             style={{
               background: "linear-gradient(135deg, #00D2C6 0%, #00E8DB 40%, #00B5AA 100%)",
               color: "#000",
@@ -213,7 +213,7 @@ export default function HeroSection({ onExplore, onFinder }: HeroSectionProps) {
           {/* Secondary CTA - frosted glass */}
           <button
             onClick={onFinder}
-            className="rounded-full px-12 py-5 sm:px-14 sm:py-6 font-bold text-lg sm:text-xl cursor-pointer transition-all duration-300 hover:scale-[1.03] active:scale-[0.97]"
+            className="rounded-full px-10 py-4 sm:px-14 sm:py-6 font-bold text-base sm:text-xl cursor-pointer transition-all duration-300 hover:scale-[1.03] active:scale-[0.97]"
             style={{
               background: "rgba(255,255,255,0.06)",
               backdropFilter: "blur(24px)",
@@ -240,7 +240,7 @@ export default function HeroSection({ onExplore, onFinder }: HeroSectionProps) {
         </button>
 
         {/* Stats row - Apple style minimal */}
-        <div className="mt-14 flex items-center justify-center gap-12 sm:gap-20">
+        <div className="mt-14 flex items-center justify-center gap-6 sm:gap-12 lg:gap-20">
           {[
             { value: "2 400+", label: t("hero.statsCars", language) },
             { value: "14", label: t("hero.statsCountries", language) },
