@@ -878,95 +878,10 @@ async function callParserInstant(
   }
 }
 
-async function callParser(
-  payload: Record<string, unknown>,
-): Promise<{ count: number; cars: any[]; job_id?: string; status?: string } | null> {
-  if (!PARSER_URL) return null
-
-  // Try instant search first (cache-on-read + singleflight, returns in <5ms cache / 2-5s cold)
-  try {
-    const instant = await callParserInstant(payload)
-    if (instant && instant.count > 0) return instant
-  } catch (e: any) {
-    const { logError } = await import("@/lib/logger")
-    await logError({ source: "site-api", level: "error", msg: `Parser instant failed: ${e?.message ?? e}`, stack: e?.stack, details: { endpoint: "ai-picker/route" } })
-  }
-
-  // Fallback: POST /search/sync (synchronous, 5-15s)
-  try {
-    const syncRes = await fetch(`${PARSER_URL}/search/sync`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(PARSER_KEY ? { "x-api-key": PARSER_KEY } : {}),
-      },
-      body: JSON.stringify(payload),
-    })
-    const syncData = await syncRes.json()
-    if (syncData.cars?.length > 0) return syncData
-  } catch (e: any) {
-    const { logError } = await import("@/lib/logger")
-    await logError({ source: "site-api", level: "error", msg: `Parser sync failed: ${e?.message ?? e}`, stack: e?.stack, details: { endpoint: "ai-picker/route" } })
-  }
-
-  // Last fallback: POST /search (async job queue + poll)
-  try {
-    const res = await fetch(`${PARSER_URL}/search`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(PARSER_KEY ? { "x-api-key": PARSER_KEY } : {}),
-      },
-      body: JSON.stringify(payload),
-    })
-    const data = await res.json()
-
-    // If parser returned a job_id (async mode), poll for results
-    if (data.status === "searching" && data.job_id) {
-      return await pollJobResults(data.job_id)
-    }
-
-    return data
-  } catch (e: any) {
-    const { logError } = await import("@/lib/logger")
-    await logError({ source: "site-api", level: "error", msg: `Parser /search failed: ${e?.message ?? e}`, stack: e?.stack, details: { endpoint: "ai-picker/route" } })
-    return null
-  }
-}
-
-async function pollJobResults(
-  jobId: string,
-  maxWaitMs: number = 60000,
-  intervalMs: number = 2000,
-): Promise<{ count: number; cars: any[] } | null> {
-  const start = Date.now()
-  while (Date.now() - start < maxWaitMs) {
-    try {
-      const res = await fetch(`${PARSER_URL}/job/${jobId}`, {
-        headers: PARSER_KEY ? { "x-api-key": PARSER_KEY } : {},
-      })
-      const data = await res.json()
-
-      if (data.status === "done") {
-        return { count: data.results_count ?? data.cars?.length ?? 0, cars: data.cars ?? [] }
-      }
-      if (data.status === "failed") {
-        const { logError } = await import("@/lib/logger")
-        await logError({ source: "site-api", level: "error", msg: `Parser job ${jobId} failed`, details: { error: data.error, endpoint: "ai-picker/route" } })
-        return { count: 0, cars: [] }
-      }
-      // Still running — wait and retry
-      await new Promise(r => setTimeout(r, intervalMs))
-    } catch (e: any) {
-      const { logError } = await import("@/lib/logger")
-      await logError({ source: "site-api", level: "warn", msg: `Parser job poll error: ${e?.message ?? e}`, details: { jobId, endpoint: "ai-picker/route" } })
-      await new Promise(r => setTimeout(r, intervalMs))
-    }
-  }
-  const { logError } = await import("@/lib/logger")
-  await logError({ source: "site-api", level: "warn", msg: `Parser job ${jobId} timed out after ${maxWaitMs}ms`, details: { endpoint: "ai-picker/route" } })
-  return { count: 0, cars: [] }
-}
+// callParser + pollJobResults removed: searchWithFallback in triggerParser
+// uses only callParserInstant now (strict 2-step cascade). If both attempts
+// return empty, the frontend shows '0 results' instead of the heavier sync
+// /search and job-queue paths.
 
 async function triggerParser(
   answers: Answer[],
@@ -1021,34 +936,23 @@ async function triggerParser(
   // requests take ~same wall-clock time as 1 (they're I/O-bound, cache-hit dominant).
   const limitedPairs = pairs.slice(0, 8)
 
-  // Per-pair search with widening fallback. AI suggestions sometimes propose
-  // niche models whose AI-narrowed year range + tight budget gives 0 hits
-  // even though similar cars exist outside the AI's window.
-  //
-  // Cascade:
-  //   1. Full criteria as AI suggested
-  //   2. Drop budget_min (allow cheaper variants under the budget cap)
-  //   3. Also drop year_from (AI sometimes narrows 2018→2021-2023 even when
-  //      user wanted 2018+; without this step, niche models like Infiniti
-  //      keep returning 0). budget_min stays 0, year_to + budget_max stay.
-  //
-  // budget_min=0 (not null) — the parser API defaults to 5000 EUR when
-  // price_min is omitted, so we send 0 explicitly to truly drop the floor.
+  // Strict 2-step search. Per explicit user request: only drop price_min on
+  // fallback, never year or upper budget. Better to show '0 results' honestly
+  // than return cars outside the user's budget / year window — the previous
+  // aggressive cascade gave back Mazda 30k cars for a "Infiniti від 60k"
+  // query and the user (rightly) called that misleading.
   const searchWithFallback = async (p: CarPair) => {
-    // Step 1: as AI suggested
+    // Step 1: AI/user criteria as-is
     const first = await callParserInstant({ ...commonPayload, make: p.make, model: p.model })
     if (first && first.count > 0) return first
 
-    // Step 2: no lower price bound
+    // Step 2: drop lower price bound only. Keep year_from/year_to/budget_max.
+    // budget_min=0 (not null) — parser defaults to 5000 EUR when omitted.
     const second = await callParserInstant({ ...commonPayload, budget_min: 0, make: p.make, model: p.model })
     if (second && second.count > 0) return second
 
-    // Step 3: also drop year_from
-    const third = await callParserInstant({ ...commonPayload, budget_min: 0, year_from: null, make: p.make, model: p.model })
-    if (third && third.count > 0) return third
-
-    // Last resort: slow /search/sync with original criteria.
-    return callParser({ ...commonPayload, make: p.make, model: p.model })
+    // Both empty → return empty. Frontend shows the red "0 found" message.
+    return { count: 0, cars: [] }
   }
 
   const results = await Promise.all(limitedPairs.map(searchWithFallback))
