@@ -920,15 +920,35 @@ async function triggerParser(
   // Each parser /search/instant hits its per-brand cache independently, so 8 parallel
   // requests take ~same wall-clock time as 1 (they're I/O-bound, cache-hit dominant).
   const limitedPairs = pairs.slice(0, 8)
-  const results = await Promise.all(
-    limitedPairs.map(async (p) => {
-      // Try instant first (fastest path)
-      const instantResult = await callParserInstant({ ...commonPayload, make: p.make, model: p.model })
-      if (instantResult && instantResult.count > 0) return instantResult
-      // Fallback to full callParser
-      return callParser({ ...commonPayload, make: p.make, model: p.model })
-    }),
-  )
+
+  // Per-pair search with fallback cascade. AI suggestions sometimes propose
+  // niche models (Infiniti in EU, JDM imports, etc.) where the strict
+  // turnkey range produces 0 hits even though similar cars exist at slightly
+  // different prices/years. Rather than returning empty, we widen the
+  // criteria step-by-step until we find something.
+  //
+  // Cascade:
+  //   1. Full criteria (price_min + price_max + year_from + year_to)
+  //   2. Drop price_min — keep upper budget cap, allow cheaper variants
+  //   3. Drop year_from and price_min — broader age window
+  //   4. Just brand + model — last resort
+  const searchWithFallback = async (p: CarPair) => {
+    const tries: Array<Partial<typeof commonPayload>> = [
+      {},  // step 1: as-is
+      { budget_min: null },  // step 2: drop lower price bound
+      { budget_min: null, year_from: null },  // step 3: drop year_from too
+      { budget_min: null, year_from: null, year_to: null, budget_max: null },  // step 4: only brand+model
+    ]
+    for (const override of tries) {
+      const payload = { ...commonPayload, ...override, make: p.make, model: p.model }
+      const result = await callParserInstant(payload)
+      if (result && result.count > 0) return result
+    }
+    // None of the fast paths returned anything — try the full sync parser once.
+    return callParser({ ...commonPayload, make: p.make, model: p.model })
+  }
+
+  const results = await Promise.all(limitedPairs.map(searchWithFallback))
 
   // Deduplicate — iterate pairs in REVERSE chronological order so the
   // most-recently-added selection appears first in the merged list.
