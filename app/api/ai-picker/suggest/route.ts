@@ -259,7 +259,21 @@ export async function POST(req: Request): Promise<Response> {
     )
   }
   if (prefs.fuel)         prefsDesc.push(`Паливо: ${prefs.fuel}`)
-  if (prefs.body_type)    prefsDesc.push(`Кузов: ${prefs.body_type}`)
+  if (prefs.body_type) {
+    // Body types form has TWO distinct pickup-ish options that map to different
+    // markets: "Пікап" → Pickup (personal pickups: Ranger, F-150, Hilux, Amarok)
+    // and "Вантажівка" → Truck (commercial freight: Sprinter, Iveco Daily,
+    // MAN TGE, Renault Master). The AI must respect this distinction or it
+    // suggests a Ranger to someone who picked Truck and the strict parser
+    // filter (pickup ≠ truck) drops every car. Spell out the rule explicitly.
+    let bodyHint = `Кузов: ${prefs.body_type}`
+    if (prefs.body_type === "Truck") {
+      bodyHint += ` — це КОМЕРЦІЙНІ вантажівки/фургони (Sprinter, Iveco Daily, MAN TGE, Renault Master, VW Crafter, Ford Transit). НЕ пропонуй пікапи (Ranger, F-150, Hilux, Amarok) — у клієнта окремо є опція "Пікап".`
+    } else if (prefs.body_type === "Pickup") {
+      bodyHint += ` — це особисті пікапи (Ranger, F-150, Hilux, Amarok, Navara, L200). НЕ пропонуй комерційні фургони (Sprinter, Transit, Iveco) — у клієнта окремо є опція "Вантажівка".`
+    }
+    prefsDesc.push(bodyHint)
+  }
   if (prefs.year_from)    prefsDesc.push(`Рік від: ${prefs.year_from}`)
   if (prefs.year_to)      prefsDesc.push(`Рік до: ${prefs.year_to}`)
   if (prefs.transmission) prefsDesc.push(`КПП: ${prefs.transmission}`)
