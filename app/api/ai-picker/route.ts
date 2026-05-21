@@ -732,7 +732,103 @@ ${prevContext}
   } catch (e: any) {
     const { logError } = await import("@/lib/logger")
     await logError({ source: "ai", level: "error", msg: `extractFromChat failed: ${e?.message ?? e}`, stack: e?.stack, details: { endpoint: "ai-picker/route" } })
-    return previous ?? empty
+    // Claude unavailable (rate-limited, out of tokens, network) — fall back to
+    // a small regex-based extractor so the search still uses basic filters
+    // (brand, budget, year) instead of returning an empty payload that
+    // makes the parser scrape all 1700+ cars regardless of user intent.
+    return regexFallbackExtract(messages, previous)
+  }
+}
+
+// ── Regex-only fallback when Claude is unreachable ──
+// Pulls brand, budget bounds, and year hints from the latest user message.
+// Conservative: extracts only what's unambiguous, leaves everything else null.
+function regexFallbackExtract(messages: ChatMessage[], previous: ChatPreferences | null): ChatPreferences {
+  const emptyPrefs: ChatPreferences = {
+    pairs: [], fuel: null, body_type: null, budget: null,
+    budget_min: null, budget_max: null,
+    color: null, mileage_max: null, mileage_min: null,
+    required_options: [], year_from: null, year_to: null, transmission: null,
+    drive: null, displacement_min: null, displacement_max: null,
+    hp_min: null, seats_min: null, doors: null, interior_material: null,
+    purpose_body_types: [],
+  }
+  const prev = previous ?? emptyPrefs
+  const lastUser = messages.filter(m => m.role === "user").slice(-1)[0]?.content ?? ""
+  if (!lastUser.trim()) return prev
+
+  const text = lastUser.toLowerCase()
+
+  // Brand detection — match longest known brand first to avoid "Audi"
+  // matching "Audi" in "Audi RS4 Avant" but also catch e.g. "Mercedes-Benz".
+  const KNOWN_BRANDS = [
+    "mercedes-benz", "mercedes", "land rover", "alfa romeo", "ds automobiles",
+    "bmw", "audi", "volkswagen", "vw", "volvo", "toyota", "honda", "mazda",
+    "skoda", "seat", "cupra", "ford", "opel", "peugeot", "renault", "citroen",
+    "hyundai", "kia", "nissan", "mitsubishi", "subaru", "lexus", "porsche",
+    "tesla", "mini", "jeep", "jaguar", "saab", "suzuki", "dacia", "fiat",
+    "genesis", "chrysler", "dodge", "infiniti", "acura", "smart", "abarth",
+    "alpine", "bentley", "ferrari", "lamborghini", "maserati", "rolls-royce",
+    "aston martin",
+  ].sort((a, b) => b.length - a.length)
+
+  let detectedMake: string | null = null
+  for (const b of KNOWN_BRANDS) {
+    if (text.includes(b)) {
+      detectedMake = b.split(" ").map(w => w[0].toUpperCase() + w.slice(1)).join(" ")
+      if (b === "vw") detectedMake = "Volkswagen"
+      if (b === "mercedes") detectedMake = "Mercedes-Benz"
+      break
+    }
+  }
+
+  // Budget: "від 60к", "до 30k", "60-80к", "60000 - 80000 євро"
+  const parseAmount = (s: string): number | null => {
+    const n = parseInt(s.replace(/[^\d]/g, ""))
+    if (isNaN(n) || n <= 0) return null
+    return /[kк]/i.test(s) && n < 1000 ? n * 1000 : n
+  }
+  let budgetMin: number | null = prev.budget_min
+  let budgetMax: number | null = prev.budget_max
+  const rangeMatch = text.match(/(\d[\d\s]*[kк]?)\s*[-–—]\s*(\d[\d\s]*[kк]?)/)
+  if (rangeMatch) {
+    const a = parseAmount(rangeMatch[1])
+    const b = parseAmount(rangeMatch[2])
+    if (a && b) { budgetMin = Math.min(a, b); budgetMax = Math.max(a, b) }
+  } else {
+    const fromMatch = text.match(/(?:від|from|больше|понад|over)\s+(\d[\d\s]*[kк]?)/i)
+    const toMatch = text.match(/(?:до|under|less than|max|менше)\s+(\d[\d\s]*[kк]?)/i)
+    if (fromMatch) {
+      const v = parseAmount(fromMatch[1])
+      if (v) budgetMin = v
+    }
+    if (toMatch) {
+      const v = parseAmount(toMatch[1])
+      if (v) budgetMax = v
+    }
+  }
+
+  // Year: "від 2018", "2020-2023"
+  let yearFrom: number | null = prev.year_from
+  let yearTo: number | null = prev.year_to
+  const yearRange = text.match(/(20[1-2]\d)\s*[-–—]\s*(20[1-2]\d)/)
+  if (yearRange) {
+    yearFrom = parseInt(yearRange[1])
+    yearTo = parseInt(yearRange[2])
+  } else {
+    const yFrom = text.match(/(?:від|from|after|після)\s*(20[1-2]\d)/i)
+    const yTo = text.match(/(?:до|until|before|до)\s*(20[1-2]\d)/i)
+    if (yFrom) yearFrom = parseInt(yFrom[1])
+    if (yTo) yearTo = parseInt(yTo[1])
+  }
+
+  return {
+    ...prev,
+    pairs: detectedMake ? [{ make: detectedMake, model: null }] : prev.pairs,
+    budget_min: budgetMin,
+    budget_max: budgetMax,
+    year_from: yearFrom,
+    year_to: yearTo,
   }
 }
 
