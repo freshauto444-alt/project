@@ -751,7 +751,11 @@ async function callParserInstant(
     if (payload.model) params.set("model", String(payload.model))
     if (payload.year_from) params.set("year_from", String(payload.year_from))
     if (payload.year_to) params.set("year_to", String(payload.year_to))
-    if (payload.budget_min) params.set("price_min", String(payload.budget_min))
+    // Use `!= null` (not truthy check) so budget_min=0 is sent explicitly.
+    // The parser API defaults to 5000 EUR when price_min is omitted, which
+    // would re-introduce a floor we deliberately wanted to drop in the
+    // fallback step of searchWithFallback.
+    if (payload.budget_min != null) params.set("price_min", String(payload.budget_min))
     if (payload.budget_max) params.set("price_max", String(payload.budget_max))
     if (payload.fuel) params.set("fuel", String(payload.fuel))
     if (payload.transmission) params.set("transmission", String(payload.transmission))
@@ -921,30 +925,23 @@ async function triggerParser(
   // requests take ~same wall-clock time as 1 (they're I/O-bound, cache-hit dominant).
   const limitedPairs = pairs.slice(0, 8)
 
-  // Per-pair search with fallback cascade. AI suggestions sometimes propose
-  // niche models (Infiniti in EU, JDM imports, etc.) where the strict
-  // turnkey range produces 0 hits even though similar cars exist at slightly
-  // different prices/years. Rather than returning empty, we widen the
-  // criteria step-by-step until we find something.
-  //
-  // Cascade:
-  //   1. Full criteria (price_min + price_max + year_from + year_to)
-  //   2. Drop price_min — keep upper budget cap, allow cheaper variants
-  //   3. Drop year_from and price_min — broader age window
-  //   4. Just brand + model — last resort
+  // Per-pair search with one-step fallback. AI suggestions sometimes propose
+  // models whose strict price range yields 0 hits even though similar cars
+  // exist slightly cheaper. If the initial search returns nothing, retry
+  // once without the lower price bound (keep upper bound so we don't overshoot
+  // the user's budget cap). Year, body type, fuel etc. stay untouched.
   const searchWithFallback = async (p: CarPair) => {
-    const tries: Array<Partial<typeof commonPayload>> = [
-      {},  // step 1: as-is
-      { budget_min: null },  // step 2: drop lower price bound
-      { budget_min: null, year_from: null },  // step 3: drop year_from too
-      { budget_min: null, year_from: null, year_to: null, budget_max: null },  // step 4: only brand+model
-    ]
-    for (const override of tries) {
-      const payload = { ...commonPayload, ...override, make: p.make, model: p.model }
-      const result = await callParserInstant(payload)
-      if (result && result.count > 0) return result
-    }
-    // None of the fast paths returned anything — try the full sync parser once.
+    // Step 1: full criteria as-is
+    const first = await callParserInstant({ ...commonPayload, make: p.make, model: p.model })
+    if (first && first.count > 0) return first
+
+    // Step 2: same criteria but drop the lower price bound.
+    // budget_min=0 (not null) — the parser API has a default min of 5000 EUR
+    // when the param is missing, which would still filter cars below that.
+    const second = await callParserInstant({ ...commonPayload, budget_min: 0, make: p.make, model: p.model })
+    if (second && second.count > 0) return second
+
+    // Last resort: slow /search/sync with original criteria.
     return callParser({ ...commonPayload, make: p.make, model: p.model })
   }
 
