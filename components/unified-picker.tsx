@@ -2413,13 +2413,23 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
             // Use USER's budget from questionnaire, not Claude's price estimate
             budget_min: userBudget.min || suggestion.searchParams.budget_min || 20000,
             budget_max: userBudget.max || suggestion.searchParams.budget_max || undefined,
-            // User's form year wins over AI's narrowed suggestion years.
-            // If user said "2017+" but AI suggested "2018-2020" inside the
-            // card, we want to search 2017+ — that's what the user actually
-            // typed. Only fall back to AI's range when the user left the
-            // form year blank.
-            year_from: formYearFrom ?? suggestion.searchParams.year_from,
-            year_to: formYearTo ?? suggestion.searchParams.year_to,
+            // User's form year wins ENTIRELY over AI's narrowed suggestion.
+            // If the user filled ANY year slot in the form, they have an
+            // explicit intent — use both slots from the form (null for the
+            // unspecified side means "no limit on that side"). Only when
+            // the form year is fully blank do we fall back to AI's range.
+            //
+            // Why both slots together: user typed "2017+" → form has
+            // year_from=2017 but year_to=null. If we merged per-slot
+            // (year_from from form, year_to from AI=2020), the strict
+            // year_to filter would still exclude the 2021+ cars the user
+            // explicitly meant to include.
+            year_from: (formYearFrom || formYearTo)
+              ? formYearFrom
+              : suggestion.searchParams.year_from,
+            year_to: (formYearFrom || formYearTo)
+              ? formYearTo
+              : suggestion.searchParams.year_to,
             transmission: suggestion.searchParams.transmission ?? null,
             drive: suggestion.searchParams.drive ?? null,
             budget: null,
