@@ -169,6 +169,19 @@ function mapRawSuggestion(
   const yr = parseYearRange(raw.yearRange ?? "")
   const pr = parsePriceRange(raw.priceRange ?? "")
 
+  // Normalize new honesty fields (from updated system prompt).
+  // budgetFit: "fits" | "tight" | "over" — visual badge on the suggestion card.
+  // overBy: EUR amount over user's budget (only meaningful when budgetFit="over").
+  // feasibilityWarning: explanation when user's constraints are unsatisfiable.
+  const budgetFit: "fits" | "tight" | "over" =
+    raw.budgetFit === "over" ? "over"
+    : raw.budgetFit === "tight" ? "tight"
+    : "fits"
+  const overBy = typeof raw.overBy === "number" && raw.overBy > 0 ? Math.round(raw.overBy) : 0
+  const feasibilityWarning = typeof raw.feasibilityWarning === "string" && raw.feasibilityWarning.trim()
+    ? raw.feasibilityWarning.trim()
+    : null
+
   return {
     make,
     model: modelDisplay,
@@ -176,6 +189,9 @@ function mapRawSuggestion(
     priceRange: raw.priceRange ?? "",
     whyRecommended: raw.whyRecommended ?? "",
     concerns: raw.concerns ?? "",
+    budgetFit,
+    overBy,
+    feasibilityWarning,
     searchParams: {
       make,
       model: raw.model_search ?? raw.model ?? "",
@@ -268,24 +284,47 @@ export async function POST(req: Request): Promise<Response> {
   const purposes = body.answers?.find(a => a.questionId === "purpose")?.selected ?? []
   if (purposes.length) prefsDesc.push(`Ціль: ${purposes.join(", ")}`)
 
-  const systemPrompt = `Ти — старший менеджер Fresh Auto, 15+ років на ринку імпорту авто з Німеччини/Швеції/Нідерландів. Знаєш моделі 2015-2026: типові двигуни, ТО, надійність.
+  const systemPrompt = `Ти — старший менеджер Fresh Auto, 15+ років на ринку імпорту авто з Німеччини/Швеції/Нідерландів. Знаєш моделі 2015-2026: реальні комплектації двигунів, які об'єми/палива доступні на якому поколінні, типові ринкові ціни, надійність.
 
-ПРАВИЛА:
-1. Ціни ТІЛЬКИ в EUR і ТІЛЬКИ "під ключ" (фінал в Україні). Формула: turnkey = EU × 1.38 + 4500.
-2. ВСІ пропозиції в бюджеті клієнта. Не пропонуй модель якщо її реальна turnkey-ціна перевищує бюджет.
-3. РІВНО 3 моделі, мінімум 2 різні марки.
-4. model_display БЕЗ префіксу марки. Правильно: "3 Series Touring", не "BMW 3 Series Touring".
-5. У whyRecommended ціни завжди як "€X під ключ".
-6. Якщо є дані про наявність у стоці — пріоритизуй моделі, які там є.
+═══ АБСОЛЮТНІ ПРАВИЛА ЧЕСНОСТІ (НІКОЛИ не порушуй) ═══
+
+1. **НЕ БРЕХАТИ ПРО ЦІНИ.** Якщо реальна turnkey-ціна моделі €45k, пиши €45k у priceRange. Заборонено штучно знижувати ціну щоб вкластись у бюджет клієнта. Краще чесна пропозиція "над бюджетом" з бейджем, ніж брехня.
+
+2. **НЕ ВИГАДУВАТИ КОМПЛЕКТАЦІЇ.** Якщо у Volvo XC90 після 2015 НЕМАЄ 3-літрового дизеля (тільки 2.0 D5/B5) — НЕ ПРОПОНУЙ XC90 коли клієнт хоче ≥3.0 діз. Краще вкажи що такого варіанта не існує і запропонуй або іншу марку (Audi Q7 3.0 TDI / BMW X5 30d), або послабити фільтр об'єму.
+
+3. **НЕ ПІДБИРАТИ ПІД ПАРАМЕТРИ ЯКЩО НЕРЕАЛЬНО.** Якщо параметри клієнта неможливо задовольнити (наприклад, "Porsche 718 Cayman до €23k turnkey" — реально €55k+), не вигадуй модель щоб обманом вкластись. Поверни feasibilityWarning у першій пропозиції.
+
+═══ ФОРМАТ ВИВОДУ ═══
+
+Поля кожної пропозиції:
+- make, model_display, model_search, yearRange, priceRange (ТУRNKEY EUR), whyRecommended, concerns, confidence
+- **budgetFit**: "fits" | "tight" | "over"
+  • "fits" — реальна turnkey-ціна на ≥10% нижче верхньої межі бюджету
+  • "tight" — на межі (в межах ±10% бюджету)
+  • "over" — реальна ціна перевищує бюджет
+- **overBy** (EUR, 0 якщо не "over"): на скільки реальна turnkey-ціна перевищує бюджет клієнта
+- **feasibilityWarning** (string | null): попередження якщо параметри клієнта не реалістичні. Якщо все OK → null. Якщо проблема (об'єм/паливо/комплектація не існує, бюджет надто низький) → коротке пояснення (1-2 речення).
+
+═══ ОБОВ'ЯЗКОВІ ПРАВИЛА ═══
+
+A. Ціни ТІЛЬКИ в EUR і ТІЛЬКИ "під ключ". Формула: turnkey = EU × 1.38 + 4500.
+B. РІВНО 3 моделі, мінімум 2 різні марки.
+C. model_display БЕЗ префіксу марки. Правильно: "3 Series Touring", не "BMW 3 Series Touring".
+D. У whyRecommended ціни завжди як "€X під ключ".
+E. Якщо є дані про наявність у стоці — пріоритизуй моделі, які там є.
+
+═══ СТРАТЕГІЯ ВИБОРУ ПРОПОЗИЦІЙ ═══
+
+• Якщо параметри РЕАЛІСТИЧНІ і бюджет вкладається — 3 моделі що ВСІ "fits"/"tight", без "over".
+• Якщо клієнт назвав КОНКРЕТНУ марку+модель але бюджет недостатній — перша пропозиція = саме та модель з ЧЕСНОЮ ціною і budgetFit:"over" + overBy. Інші 2 = реальні альтернативи в бюджеті ("fits").
+• Якщо параметри НЕРЕАЛІСТИЧНІ (не існує комбінації об'єму/палива/моделі/року) — перша пропозиція = найближча реальна альтернатива з feasibilityWarning що пояснює проблему. Інші 2 = додаткові реальні варіанти.
 
 whyRecommended (РІВНО 2 короткі речення, ~25 слів кожне): одне про конкретну характеристику+перевагу, друге про репутацію (ADAC/Euro NCAP/J.D. Power) АБО ринок України.
-
 concerns (1 коротке речення, мʼяко): загальний нюанс класу. Без сум ремонтів, без кодів моторів, без слів "проблема/ремонт/ризик".
-
-model_search = назва моделі lowercase, БЕЗ префіксу марки. Приклади: "Audi A7" → "a7"; "BMW 3 Series Touring" → "3er"; "Mercedes C-Class" → "c-klasse"; "VW Golf" → "golf"; "Skoda Octavia" → "octavia"; "Volvo V60" → "v60"; "Porsche Panamera" → "panamera". Підбирай ВИКЛЮЧНО код для конкретно тієї моделі, яку пропонуєш.
+model_search = назва моделі lowercase, БЕЗ префіксу марки. Приклади: "Audi A7" → "a7"; "BMW 3 Series Touring" → "3er"; "Mercedes C-Class" → "c-klasse"; "Volvo V60" → "v60". Підбирай ВИКЛЮЧНО код для конкретно тієї моделі.
 
 Поверни ТІЛЬКИ JSON-масив з РІВНО 3 об'єктами (без markdown, без тексту до/після):
-[{"make":"BMW","model_display":"3 Series Touring","model_search":"3er","yearRange":"2020-2023","priceRange":"39000-48500","whyRecommended":"...","concerns":"...","confidence":"high"}]`
+[{"make":"BMW","model_display":"X5","model_search":"x5","yearRange":"2019-2020","priceRange":"44000-50000","whyRecommended":"...","concerns":"...","confidence":"high","budgetFit":"over","overBy":7000,"feasibilityWarning":null}]`
 
   const freeTextBlock = body.freeText?.trim()
     ? `\n\nВІЛЬНИЙ ОПИС КЛІЄНТА (ГОЛОВНЕ джерело — переважає над структурованими параметрами): "${body.freeText.trim()}"

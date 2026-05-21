@@ -1334,6 +1334,11 @@ interface Suggestion {
   concerns: string
   photo?: string | null
   searchParams: Record<string, any>
+  // Honesty fields from suggest endpoint — tell the user upfront when
+  // the AI's recommendation doesn't perfectly match their constraints.
+  budgetFit?: "fits" | "tight" | "over"
+  overBy?: number   // EUR over budget (only meaningful when budgetFit==="over")
+  feasibilityWarning?: string | null  // AI's note about unsatisfiable params
 }
 
 function SuggestionCard({
@@ -1370,6 +1375,16 @@ function SuggestionCard({
               <span className="rounded-full bg-white/[0.06] px-2.5 py-0.5 text-xs text-primary/70">
                 {suggestion.priceRange} EUR
               </span>
+              {suggestion.budgetFit === "over" && (suggestion.overBy ?? 0) > 0 && (
+                <span className="rounded-full border border-amber-500/40 bg-amber-500/[0.08] px-2.5 py-0.5 text-xs text-amber-400/90">
+                  +€{(suggestion.overBy ?? 0).toLocaleString()} над бюджетом
+                </span>
+              )}
+              {suggestion.budgetFit === "tight" && (
+                <span className="rounded-full border border-yellow-500/30 bg-yellow-500/[0.06] px-2.5 py-0.5 text-xs text-yellow-400/80">
+                  На межі бюджету
+                </span>
+              )}
             </div>
           </div>
           <button
@@ -1398,6 +1413,11 @@ function SuggestionCard({
         <p className="mt-2.5 text-[13px] leading-relaxed text-white/50">
           {suggestion.whyRecommended}
         </p>
+        {suggestion.feasibilityWarning && (
+          <div className="mt-2.5 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-[12px] leading-relaxed text-amber-200/90">
+            ⚠️ {suggestion.feasibilityWarning}
+          </div>
+        )}
         {suggestion.concerns && (
           <p className="mt-1.5 text-[12px] text-white/30 italic">
             {suggestion.concerns}
