@@ -2413,23 +2413,17 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
             // Use USER's budget from questionnaire, not Claude's price estimate
             budget_min: userBudget.min || suggestion.searchParams.budget_min || 20000,
             budget_max: userBudget.max || suggestion.searchParams.budget_max || undefined,
-            // User's form year wins ENTIRELY over AI's narrowed suggestion.
-            // If the user filled ANY year slot in the form, they have an
-            // explicit intent — use both slots from the form (null for the
-            // unspecified side means "no limit on that side"). Only when
-            // the form year is fully blank do we fall back to AI's range.
+            // AI's yearRange ("2018-2020", "2019-2021" etc.) is treated as
+            // descriptive — what the AI imagines the user might want — NOT a
+            // hard filter. We pass to the parser ONLY what the user explicitly
+            // typed in the form. This way niche models (Infiniti, Mercedes
+            // E-Class) where AI tends to over-narrow the year window don't
+            // come back empty just because AI's guess (2018-2020) excluded
+            // the actually-on-the-market 2021+ stock.
             //
-            // Why both slots together: user typed "2017+" → form has
-            // year_from=2017 but year_to=null. If we merged per-slot
-            // (year_from from form, year_to from AI=2020), the strict
-            // year_to filter would still exclude the 2021+ cars the user
-            // explicitly meant to include.
-            year_from: (formYearFrom || formYearTo)
-              ? formYearFrom
-              : suggestion.searchParams.year_from,
-            year_to: (formYearFrom || formYearTo)
-              ? formYearTo
-              : suggestion.searchParams.year_to,
+            // If user wants a year filter, they can fill it in the picker form.
+            year_from: formYearFrom,
+            year_to: formYearTo,
             transmission: suggestion.searchParams.transmission ?? null,
             drive: suggestion.searchParams.drive ?? null,
             budget: null,
