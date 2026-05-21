@@ -925,21 +925,31 @@ async function triggerParser(
   // requests take ~same wall-clock time as 1 (they're I/O-bound, cache-hit dominant).
   const limitedPairs = pairs.slice(0, 8)
 
-  // Per-pair search with one-step fallback. AI suggestions sometimes propose
-  // models whose strict price range yields 0 hits even though similar cars
-  // exist slightly cheaper. If the initial search returns nothing, retry
-  // once without the lower price bound (keep upper bound so we don't overshoot
-  // the user's budget cap). Year, body type, fuel etc. stay untouched.
+  // Per-pair search with widening fallback. AI suggestions sometimes propose
+  // niche models whose AI-narrowed year range + tight budget gives 0 hits
+  // even though similar cars exist outside the AI's window.
+  //
+  // Cascade:
+  //   1. Full criteria as AI suggested
+  //   2. Drop budget_min (allow cheaper variants under the budget cap)
+  //   3. Also drop year_from (AI sometimes narrows 2018→2021-2023 even when
+  //      user wanted 2018+; without this step, niche models like Infiniti
+  //      keep returning 0). budget_min stays 0, year_to + budget_max stay.
+  //
+  // budget_min=0 (not null) — the parser API defaults to 5000 EUR when
+  // price_min is omitted, so we send 0 explicitly to truly drop the floor.
   const searchWithFallback = async (p: CarPair) => {
-    // Step 1: full criteria as-is
+    // Step 1: as AI suggested
     const first = await callParserInstant({ ...commonPayload, make: p.make, model: p.model })
     if (first && first.count > 0) return first
 
-    // Step 2: same criteria but drop the lower price bound.
-    // budget_min=0 (not null) — the parser API has a default min of 5000 EUR
-    // when the param is missing, which would still filter cars below that.
+    // Step 2: no lower price bound
     const second = await callParserInstant({ ...commonPayload, budget_min: 0, make: p.make, model: p.model })
     if (second && second.count > 0) return second
+
+    // Step 3: also drop year_from
+    const third = await callParserInstant({ ...commonPayload, budget_min: 0, year_from: null, make: p.make, model: p.model })
+    if (third && third.count > 0) return third
 
     // Last resort: slow /search/sync with original criteria.
     return callParser({ ...commonPayload, make: p.make, model: p.model })

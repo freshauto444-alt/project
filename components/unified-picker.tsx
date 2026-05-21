@@ -2495,11 +2495,18 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
     abortRef.current = controller
 
     try {
+      // Pass freeText as a user message so the backend's extractFromChat
+      // can pull brand/model/year/etc. out of it — otherwise this button
+      // only used form answers and ignored everything the user typed in
+      // the AI prompt (e.g. "Infiniti SUV від 2018").
+      const userMsg = freeText?.trim()
+        ? [{ role: "user" as const, content: freeText.trim() }]
+        : []
       const res = await fetch("/api/ai-picker", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: [],
+          messages: userMsg,
           answers,
           triggerSearch: true,
           clientOrderId: makeUuid(),
@@ -2519,7 +2526,7 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
     } finally {
       setLoadingResults(false)
     }
-  }, [answers])
+  }, [answers, freeText])
 
   const goBackToForm = useCallback(() => {
     abortRef.current?.abort()
