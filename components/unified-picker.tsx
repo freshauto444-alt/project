@@ -2390,6 +2390,11 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
     const formSeatsMin = seatsRaw === "7+" ? 7 : seatsRaw ? parseInt(seatsRaw) : null
     const formColor = colorMap[byId.color?.selected[0] ?? ""] ?? null
     const formInterior = interiorMap[byId.interior?.selected[0] ?? ""] ?? null
+    // Year — user's form value wins over AI suggestion. AI sometimes narrows
+    // a "2017+" form input down to "2018-2020" inside the suggestion, which
+    // then excludes the very cars (2021+) that exist in the user's budget.
+    const formYearFrom = byId.year?.selected[0] ? parseInt(byId.year.selected[0]) : null
+    const formYearTo = byId.year?.selected[1] ? parseInt(byId.year.selected[1]) : null
 
     try {
       const res = await fetch("/api/ai-picker", {
@@ -2408,8 +2413,13 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
             // Use USER's budget from questionnaire, not Claude's price estimate
             budget_min: userBudget.min || suggestion.searchParams.budget_min || 20000,
             budget_max: userBudget.max || suggestion.searchParams.budget_max || undefined,
-            year_from: suggestion.searchParams.year_from,
-            year_to: suggestion.searchParams.year_to,
+            // User's form year wins over AI's narrowed suggestion years.
+            // If user said "2017+" but AI suggested "2018-2020" inside the
+            // card, we want to search 2017+ — that's what the user actually
+            // typed. Only fall back to AI's range when the user left the
+            // form year blank.
+            year_from: formYearFrom ?? suggestion.searchParams.year_from,
+            year_to: formYearTo ?? suggestion.searchParams.year_to,
             transmission: suggestion.searchParams.transmission ?? null,
             drive: suggestion.searchParams.drive ?? null,
             budget: null,
