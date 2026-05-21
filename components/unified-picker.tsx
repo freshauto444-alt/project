@@ -2260,8 +2260,14 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
           preferences: {
             fuel: fuelMap[byId.fuel?.selected[0] ?? ""] ?? null,
             body_type: bodyMap[byId.body?.selected[0] ?? ""] ?? null,
-            budget_min: budgetMin || 20000,
-            budget_max: budgetMax || undefined,
+            // Send null (not 20000) when user did not specify a budget — the
+            // suggest endpoint treats null as "no budget constraint" and lets
+            // Claude propose real market prices. The old fallback to 20000
+            // made Claude treat €20k as the user's budget, so any realistic
+            // premium suggestion got tagged "+over budget" against a value
+            // the user never set.
+            budget_min: budgetMin || null,
+            budget_max: budgetMax || null,
             year_from: byId.year?.selected[0] ? parseInt(byId.year.selected[0]) : null,
             year_to: byId.year?.selected[1] ? parseInt(byId.year.selected[1]) : null,
             transmission: transMap[byId.transmission?.selected[0] ?? ""] ?? null,
