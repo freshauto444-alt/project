@@ -598,9 +598,16 @@ ${carsDesc}
 //  Extract preferences from chat — CUMULATIVE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+interface JourneyContext {
+  freeText?: string | null
+  approvedSuggestion?: { make: string; model: string; yearRange?: string; whyRecommended?: string } | null
+  rejectedSuggestions?: { make: string; model: string }[]
+}
+
 async function extractFromChat(
   messages: ChatMessage[],
   previous: ChatPreferences | null,
+  journey: JourneyContext | null = null,
 ): Promise<ChatPreferences> {
   const empty: ChatPreferences = {
     pairs: [], fuel: null, body_type: null, budget: null,
@@ -627,9 +634,22 @@ async function extractFromChat(
       ? `\nПопередні параметри клієнта (ЗБЕРІГАЙ якщо не змінено): ${JSON.stringify(previous)}`
       : ""
 
+    // Journey context — earlier pick on the picker stage. Lets the extractor
+    // infer body_type/class when the user switches make mid-conversation
+    // ("Porsche instead of X5" → keep body_type=SUV so we get Cayenne/Macan
+    // not Taycan/Panamera).
+    let journeyContext = ""
+    if (journey?.approvedSuggestion) {
+      const s = journey.approvedSuggestion
+      journeyContext = `\n\nКОНТЕКСТ ВИБОРУ (раніше клієнт обрав ${s.make} ${s.model}${s.yearRange ? ` ${s.yearRange}` : ""}). Це означає клас/тип авто з якого клієнт стартував — використай його для умовиводів про body_type і бюджет.`
+    }
+    if (journey?.freeText) {
+      journeyContext += `\nПочатковий запит клієнта: "${journey.freeText}"`
+    }
+
     const text = await callClaude(
       `Ти витягуєш параметри пошуку авто з повідомлень клієнта. Клієнт пише українською/російською/англійською.
-${prevContext}
+${prevContext}${journeyContext}
 
 КРИТИЧНІ ПРАВИЛА (ДОТРИМУЙСЯ СТРОГО):
 1. Якщо клієнт ДОДАЄ параметр — зберігай усі попередні, додай новий
@@ -637,6 +657,8 @@ ${prevContext}
 3. Якщо клієнт СКАСОВУЄ параметр ("будь-який пробіг", "неважливо", "без обмежень") → постав ЯВНО null
 4. ЗАВЖДИ зберігай fuel якщо він вже є в попередніх параметрах, навіть якщо клієнт не згадує його знову
 5. ЗАВЖДИ зберігай марку/модель якщо вони вже є в попередніх параметрах
+6. КЛАС/ТИП АВТО переноситься між марками. Якщо клієнт раніше обирав SUV (X5, Q7, GLE, Cayenne) і питає "схоже у Porsche" / "схожа марка" / "альтернатива" → body_type ОБОВ'ЯЗКОВО лишається SUV. Якщо було Sedan і клієнт каже "інше" — лишається Sedan. Без явного скасування ("неважливо який кузов") клас не змінюється.
+7. БЮДЖЕТ переноситься. Якщо клієнт сказав «схоже до X» без нової ціни — budget_min/budget_max з попередніх параметрів зберігається, навіть якщо марка змінилась.
 
 ПРОБІГ:
 - "пробіг більше 150к" / "від 150 тис км" → mileage_min: 150000, mileage_max: null
@@ -1398,7 +1420,7 @@ export async function POST(req: Request) {
 
     // Extract from chat WITH previous preferences (cumulative)
     const prevPrefs: ChatPreferences | null = chatPreferences ?? null
-    const chat = await extractFromChat(messages ?? [], prevPrefs)
+    const chat = await extractFromChat(messages ?? [], prevPrefs, journey ?? null)
 
     // Merge survey answers as fallback — respect user's explicit chat preferences
     if (!chat.budget && base.budget_max) chat.budget = base.budget_max
@@ -1571,7 +1593,9 @@ export async function POST(req: Request) {
     journeyLines.push(`• Відкинув альтернативи: ${list} — не повторюй ці моделі без вагомої причини`)
   }
   const journeyContext = journeyLines.length > 0
-    ? `\n═══ КОНТЕКСТ ВИБОРУ КЛІЄНТА ═══\n${journeyLines.join("\n")}\nКористуйся цим — клієнт очікує, що ти пам'ятаєш про що ми домовилися. Якщо рекомендуєш інше, чесно скажи чому змінив думку.\n`
+    ? `\n═══ КОНТЕКСТ ВИБОРУ КЛІЄНТА ═══\n${journeyLines.join("\n")}\nКористуйся цим — клієнт очікує, що ти пам'ятаєш про що ми домовилися. Якщо рекомендуєш інше, чесно скажи чому змінив думку.
+
+ВАЖЛИВО: КЛАС І БЮДЖЕТ ТРИМАЙ. Якщо клієнт обрав SUV (X5, Cayenne, Q7) і питає альтернативу — пропонуй SUV (Macan, GLE, XC90), НЕ седан/купе. Якщо обрав седан — пропонуй седан. Бюджет: тримайся ±15% від того, у якому шукали раніше; різко вище ціни без пояснення = промах. Якщо реальна модель класу не вкладається у бюджет — чесно скажи "X не вписується в бюджет, але є Y близько за параметрами" замість того щоб мовчки показувати дорожче.\n`
     : ""
 
   const systemPrompt = `Ти — старший менеджер Fresh Auto. 8+ років підбираєш та ввозиш авто з Німеччини, Швеції, Нідерландів. Знаєш ринок як свої 5 пальців. Спілкуєшся українською — як жива людина, не як бот. БЕЗ емодзі, markdown, зірочок, нумерованих списків.
@@ -1914,8 +1938,10 @@ ${hasNoCars
     })
   }
 
-  // Single Claude call — returns either TRIGGER_SEARCH or a conversational reply
-  const reply = await callClaude(systemPrompt, messages as ChatMessage[], 300)
+  // Single Claude call — returns either TRIGGER_SEARCH or a conversational reply.
+  // 300 tokens used to truncate replies that recommended 2 cars with reasoning;
+  // 700 covers a thoughtful answer comfortably without cost ballooning.
+  const reply = await callClaude(systemPrompt, messages as ChatMessage[], 700)
 
   if (!reply || reply.includes("TRIGGER_SEARCH")) {
     return NextResponse.json({
