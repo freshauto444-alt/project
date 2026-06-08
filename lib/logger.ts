@@ -22,6 +22,7 @@ export type LogEntry = {
 }
 
 const LOG_PATH_REL = "../.logs/site-errors.jsonl"
+const SEARCH_LOG_PATH_REL = "../.logs/search-events.jsonl"
 
 /** Server-only: append a log entry to disk (best-effort, never throws). */
 export async function logError(entry: Omit<LogEntry, "ts">): Promise<void> {
@@ -36,6 +37,35 @@ export async function logError(entry: Omit<LogEntry, "ts">): Promise<void> {
   } catch {
     // Logger failure must never break the request. Fallback: console.
     console.error("[logger] failed to write", entry)
+  }
+}
+
+export type SearchEvent = {
+  ts: string
+  orderId?: string
+  source: "chat" | "suggestion-card" | "load-more" | "other"
+  query: Record<string, unknown>
+  rawCount: number
+  filteredCount?: number
+  yearMin?: number | null
+  yearMax?: number | null
+  priceMin?: number | null
+  priceMax?: number | null
+  cars?: Array<{ year: number | null; make: string | null; model: string | null; price: number | null; url: string | null }>
+  notes?: string
+}
+
+/** Server-only: append a search event for later debugging of mismatched results. */
+export async function logSearchEvent(entry: Omit<SearchEvent, "ts">): Promise<void> {
+  if (typeof window !== "undefined") return
+  try {
+    const fs = await import("node:fs/promises")
+    const path = await import("node:path")
+    const full: SearchEvent = { ...entry, ts: new Date().toISOString() }
+    const file = path.resolve(process.cwd(), SEARCH_LOG_PATH_REL)
+    await fs.appendFile(file, JSON.stringify(full) + "\n", { encoding: "utf8" })
+  } catch {
+    console.error("[logger] failed to write search event", entry)
   }
 }
 

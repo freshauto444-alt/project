@@ -1358,6 +1358,49 @@ export async function POST(req: Request) {
     const count = result?.count ?? 0
     const foundCars = result?.cars ?? []
 
+    // Log search event — helps diagnose mismatched results (e.g. Golf GTI
+    // suggestion that returns 2005/2009 Golfs because year/trim filters slipped).
+    try {
+      const { logSearchEvent } = await import("@/lib/logger")
+      const years = foundCars.map((c: any) => c.year).filter((y: any) => typeof y === "number")
+      const prices = foundCars.map((c: any) => c.price).filter((p: any) => typeof p === "number")
+      // Suggestion-card searches arrive with empty messages[] + chatPreferences set.
+      const eventSource: "chat" | "suggestion-card" | "load-more" | "other" =
+        wantsMore ? "load-more"
+        : (Array.isArray(messages) && messages.length === 0 && chatPreferences) ? "suggestion-card"
+        : "chat"
+      await logSearchEvent({
+        orderId,
+        source: eventSource,
+        query: {
+          pairs: chat.pairs,
+          year_from: chat.year_from,
+          year_to: chat.year_to,
+          budget_min: chat.budget_min,
+          budget_max: chat.budget_max,
+          fuel: chat.fuel,
+          body_type: chat.body_type,
+          color: chat.color,
+          mileage_max: chat.mileage_max,
+          drive: chat.drive,
+        },
+        rawCount: count,
+        yearMin: years.length ? Math.min(...years) : null,
+        yearMax: years.length ? Math.max(...years) : null,
+        priceMin: prices.length ? Math.min(...prices) : null,
+        priceMax: prices.length ? Math.max(...prices) : null,
+        cars: foundCars.slice(0, 8).map((c: any) => ({
+          year: c.year ?? null,
+          make: c.make ?? null,
+          model: c.model ?? null,
+          price: typeof c.price === "number" ? c.price : null,
+          url: c.source_url ?? c.sourceUrl ?? null,
+        })),
+      })
+    } catch {
+      // Logging must never break the request.
+    }
+
     const message = await generateSearchComment(foundCars, count, chat, tags)
     const retrySuggestion = count === 0 ? buildRetrySuggestion(chat) : null
 
