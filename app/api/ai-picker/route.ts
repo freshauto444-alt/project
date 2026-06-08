@@ -985,11 +985,16 @@ async function triggerParser(
   // requests take ~same wall-clock time as 1 (they're I/O-bound, cache-hit dominant).
   const limitedPairs = pairs.slice(0, 8)
 
-  // Strict 2-step search. Per explicit user request: only drop price_min on
-  // fallback, never year or upper budget. Better to show '0 results' honestly
-  // than return cars outside the user's budget / year window — the previous
+  // Strict 3-step search. Per explicit user request: only drop price_min on
+  // fallback step 2, never year or upper budget. Better to show '0 results'
+  // honestly than return cars outside the user's budget — the previous
   // aggressive cascade gave back Mazda 30k cars for a "Infiniti від 60k"
   // query and the user (rightly) called that misleading.
+  //
+  // Step 3 drops the year window for niche models (Infiniti, narrow trims)
+  // where AI's yearRange ends up too tight for the actual stock. Without it
+  // the user sees "0 results" even though cars exist in adjacent years.
+  const hasYearWindow = commonPayload.year_from != null || commonPayload.year_to != null
   const searchWithFallback = async (p: CarPair) => {
     // Step 1: AI/user criteria as-is
     const first = await callParserInstant({ ...commonPayload, make: p.make, model: p.model })
@@ -1000,7 +1005,22 @@ async function triggerParser(
     const second = await callParserInstant({ ...commonPayload, budget_min: 0, make: p.make, model: p.model })
     if (second && second.count > 0) return second
 
-    // Both empty → return empty. Frontend shows the red "0 found" message.
+    // Step 3: drop year window too — only triggers if step 1/2 used a year
+    // filter. Skip when no year was set in the first place (otherwise it's a
+    // duplicate of step 2).
+    if (hasYearWindow) {
+      const third = await callParserInstant({
+        ...commonPayload,
+        budget_min: 0,
+        year_from: null,
+        year_to: null,
+        make: p.make,
+        model: p.model,
+      })
+      if (third && third.count > 0) return third
+    }
+
+    // All empty → return empty. Frontend shows the red "0 found" message.
     return { count: 0, cars: [] }
   }
 

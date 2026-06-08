@@ -2430,17 +2430,15 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
             // Use USER's budget from questionnaire, not Claude's price estimate
             budget_min: userBudget.min || suggestion.searchParams.budget_min || 20000,
             budget_max: userBudget.max || suggestion.searchParams.budget_max || undefined,
-            // AI's yearRange ("2018-2020", "2019-2021" etc.) is treated as
-            // descriptive — what the AI imagines the user might want — NOT a
-            // hard filter. We pass to the parser ONLY what the user explicitly
-            // typed in the form. This way niche models (Infiniti, Mercedes
-            // E-Class) where AI tends to over-narrow the year window don't
-            // come back empty just because AI's guess (2018-2020) excluded
-            // the actually-on-the-market 2021+ stock.
-            //
-            // If user wants a year filter, they can fill it in the picker form.
-            year_from: formYearFrom,
-            year_to: formYearTo,
+            // Year filter precedence: explicit form value > AI's yearRange.
+            // Passing AI's yearRange to the parser lets AutoScout24 (fregfrom)
+            // and mobile.de (minFirstRegistrationDate) filter at the source —
+            // way less wasted traffic than tugging all years and filtering
+            // client-side. Niche models (Infiniti, narrow E-Class trims) are
+            // protected on the server via searchWithFallback's step 3, which
+            // drops year if the windowed search returns 0.
+            year_from: formYearFrom ?? suggestion.searchParams.year_from ?? null,
+            year_to: formYearTo ?? suggestion.searchParams.year_to ?? null,
             transmission: suggestion.searchParams.transmission ?? null,
             drive: suggestion.searchParams.drive ?? null,
             budget: null,
