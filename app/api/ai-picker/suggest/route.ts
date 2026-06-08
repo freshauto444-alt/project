@@ -354,7 +354,7 @@ E. Якщо є дані про наявність у стоці — пріори
 
 whyRecommended (РІВНО 2 короткі речення, ~25 слів кожне): одне про конкретну характеристику+перевагу, друге про репутацію (ADAC/Euro NCAP/J.D. Power) АБО ринок України.
 concerns (1 коротке речення, мʼяко): загальний нюанс класу. Без сум ремонтів, без кодів моторів, без слів "проблема/ремонт/ризик".
-model_search = назва моделі lowercase, БЕЗ префіксу марки. Приклади: "Audi A7" → "a7"; "BMW 3 Series Touring" → "3er"; "Mercedes C-Class" → "c-klasse"; "Volvo V60" → "v60". Підбирай ВИКЛЮЧНО код для конкретно тієї моделі.
+model_search = назва моделі lowercase, БЕЗ префіксу марки, БЕЗ маркера покоління (B8, B9, F30, G20, W213, E46, C8 тощо — це КОДИ платформ, а не модель). Приклади: "Audi A7" → "a7"; "BMW 3 Series Touring" → "3er"; "Mercedes C-Class" → "c-klasse"; "Volvo V60" → "v60"; "VW Passat B9" → "passat"; "BMW X5 G05" → "x5". Підбирай ВИКЛЮЧНО код базової моделі — покоління визначається через yearRange.
 
 Поверни ТІЛЬКИ JSON-масив з РІВНО 3 об'єктами (без markdown, без тексту до/після):
 [{"make":"BMW","model_display":"X5","model_search":"x5","yearRange":"2019-2020","priceRange":"44000-50000","whyRecommended":"...","concerns":"...","confidence":"high","budgetFit":"over","overBy":7000,"feasibilityWarning":null}]`

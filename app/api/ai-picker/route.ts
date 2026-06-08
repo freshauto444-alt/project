@@ -122,6 +122,17 @@ function normalizeBrand(raw: string): string {
   return BRAND_ALIASES[key] ?? raw.trim()
 }
 
+// Strip trailing generation markers from model slugs so AS24/mobile.de
+// receive valid paths. AI sometimes returns "passat b9" / "x5 g05" / "a4 b9"
+// instead of the base model — AS24 has no /volkswagen/passat-b9 page, so the
+// whole search returns 0 even though /volkswagen/passat is the correct URL.
+// Matches: B9, W213, F30, G05, C8, E46 — letter + 1-3 digits at the end of
+// the model, separated by space or hyphen. Single-word models are unchanged.
+function stripGenerationSuffix(model: string | null | undefined): string | null {
+  if (!model) return model ?? null
+  return model.replace(/[\s-]+[bwfgce]\d{1,3}$/i, "").trim() || model
+}
+
 function normalizeColor(text: string): string | null {
   const words = text.toLowerCase().split(/\s+/)
   for (const word of words) {
@@ -996,13 +1007,19 @@ async function triggerParser(
   // the user sees "0 results" even though cars exist in adjacent years.
   const hasYearWindow = commonPayload.year_from != null || commonPayload.year_to != null
   const searchWithFallback = async (p: CarPair) => {
+    // Normalize trailing generation suffixes (e.g. "passat b9" → "passat").
+    // AS24's slug map only has base model names; "passat-b9" resolves to a
+    // non-existent URL and the whole 3-step cascade returns 0 even though
+    // /volkswagen/passat has plenty of stock.
+    const model = stripGenerationSuffix(p.model)
+
     // Step 1: AI/user criteria as-is
-    const first = await callParserInstant({ ...commonPayload, make: p.make, model: p.model })
+    const first = await callParserInstant({ ...commonPayload, make: p.make, model })
     if (first && first.count > 0) return first
 
     // Step 2: drop lower price bound only. Keep year_from/year_to/budget_max.
     // budget_min=0 (not null) — parser defaults to 5000 EUR when omitted.
-    const second = await callParserInstant({ ...commonPayload, budget_min: 0, make: p.make, model: p.model })
+    const second = await callParserInstant({ ...commonPayload, budget_min: 0, make: p.make, model })
     if (second && second.count > 0) return second
 
     // Step 3: drop year window too — only triggers if step 1/2 used a year
@@ -1015,7 +1032,7 @@ async function triggerParser(
         year_from: null,
         year_to: null,
         make: p.make,
-        model: p.model,
+        model,
       })
       if (third && third.count > 0) return third
     }
