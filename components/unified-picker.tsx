@@ -1023,21 +1023,31 @@ function AIChat({
 
 // ─── ResultCard ───────────────────────────────────────────────────────────────
 
+// Bytbil photos come from BigBuy CDN (bbcdn.io) with a `rule=legacy-WxH`
+// dimensional preset baked into the URL. Listing thumbnails often hit the
+// site at e.g. 400x300, which renders pixelated on a 600px+ card. Try
+// requesting a larger size; if the CDN doesn't recognise the rule, the
+// <img onError> will swap back to the original URL — no broken images.
+function upgradeBbcdnUrl(url: string | null | undefined): string {
+  if (!url || !url.includes("bbcdn.io")) return url ?? ""
+  return url.replace(/rule=legacy-(\d+)x(\d+)/i, (match, w) => {
+    const width = parseInt(w)
+    if (width >= 1000) return match
+    return "rule=legacy-1600x1200"
+  })
+}
+
 function ResultCard({ car, onClick, allCars }: { car: CarType; onClick: () => void; allCars: CarType[] }) {
   const { language } = useSettings()
   const totalCost = car.price ? calcTotalCost(car.price) : null
   const sourceSiteKey = (car as any).sourceSite || (car as any).source_site || ""
   const source = SOURCE_SITES[sourceSiteKey] || null
 
-  // Gallery for in-card carousel + Bytbil thumb fallback. Bytbil cars almost
-  // always have the dealership banner as gallery[0] (pixelated, off-aspect),
-  // so we default the carousel to index 1 when there's another image.
+  // Gallery for in-card carousel.
   const gallery: string[] = Array.isArray((car as any).gallery)
     ? ((car as any).gallery as unknown[]).filter((g): g is string => typeof g === "string" && g.length > 0)
     : []
-  const isBytbil = sourceSiteKey === "bytbil.com"
-  const startIdx = isBytbil && gallery.length > 1 ? 1 : 0
-  const [imgIdx, setImgIdx] = useState(startIdx)
+  const [imgIdx, setImgIdx] = useState(0)
   const displayImage = gallery.length > 0 ? gallery[imgIdx] ?? gallery[0] : car.image
   const totalImages = gallery.length || (car.image ? 1 : 0)
 
@@ -1069,9 +1079,15 @@ function ResultCard({ car, onClick, allCars }: { car: CarType; onClick: () => vo
       <div className="relative aspect-[16/10] overflow-hidden bg-white/[0.03]">
         {displayImage ? (
           <img
-            src={displayImage}
+            src={upgradeBbcdnUrl(displayImage)}
             alt={`${car.make} ${car.model}`}
             crossOrigin="anonymous"
+            onError={e => {
+              // Upgraded CDN URL didn't resolve — fall back to whatever the
+              // parser saved. Only swap once; if the original 404s we let it.
+              const el = e.currentTarget
+              if (el.src !== displayImage) el.src = displayImage
+            }}
             className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
           />
         ) : (
