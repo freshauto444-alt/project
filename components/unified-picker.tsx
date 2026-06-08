@@ -1023,18 +1023,15 @@ function AIChat({
 
 // ─── ResultCard ───────────────────────────────────────────────────────────────
 
-// Bytbil photos come from BigBuy CDN (bbcdn.io) with a `rule=legacy-WxH`
-// dimensional preset baked into the URL. Listing thumbnails often hit the
-// site at e.g. 400x300, which renders pixelated on a 600px+ card. Try
-// requesting a larger size; if the CDN doesn't recognise the rule, the
-// <img onError> will swap back to the original URL — no broken images.
+// Bytbil photos come from BigBuy CDN (bbcdn.io). Listing pages hand out
+// `rule=legacy-main` (320×213) which is pixel-doubled on a 600px+ card.
+// Probed valid named presets: legacy-main (320×213), legacy-gallery
+// (240×180), legacy-full (575×383). legacy-large/xlarge/original/hires/etc
+// all 404. legacy-full is the highest-res rule the CDN exposes, ~2× the
+// resolution of legacy-main and ~3× the file size. Worth the swap.
 function upgradeBbcdnUrl(url: string | null | undefined): string {
   if (!url || !url.includes("bbcdn.io")) return url ?? ""
-  return url.replace(/rule=legacy-(\d+)x(\d+)/i, (match, w) => {
-    const width = parseInt(w)
-    if (width >= 1000) return match
-    return "rule=legacy-1600x1200"
-  })
+  return url.replace(/rule=legacy-(main|gallery|thumbnail)\b/i, "rule=legacy-full")
 }
 
 function ResultCard({ car, onClick, allCars }: { car: CarType; onClick: () => void; allCars: CarType[] }) {
