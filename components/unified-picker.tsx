@@ -1226,7 +1226,7 @@ function ResultsScreen({
     setAllCars(newCars)
   }, [])
 
-  // Relevance score = 0.5 * below-market + 0.25 * mileage + 0.25 * year.
+  // Relevance score = 0.4 * below-market + 0.3 * mileage + 0.3 * year.
   // Each component is normalized 0-1 within the current result set so the
   // ranking adapts to whatever the user is looking at — a 60k-km car in a
   // 30-150k spread scores 0.69, in a 50-80k spread it scores 0.67, etc.
@@ -1275,7 +1275,7 @@ function ResultsScreen({
       if (typeof c.year === "number" && c.year > 0) {
         yearScore = (c.year - minYear) / yearRange
       }
-      return 0.5 * priceScore + 0.25 * mileageScore + 0.25 * yearScore
+      return 0.4 * priceScore + 0.3 * mileageScore + 0.3 * yearScore
     }
     return list.sort((a, b) => score(b) - score(a))
   }, [allCars, sortBy])
