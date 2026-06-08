@@ -15,6 +15,7 @@ import {
 import { useSettings } from "@/lib/settings-context"
 import { calcTotalCost, ratePriceVsMarket, PRICE_RATING_CONFIG, lookupPriceGuide } from "@/lib/constants"
 import { t } from "@/lib/i18n"
+import { upgradeBbcdnUrl } from "@/lib/image-upgrade"
 
 /* Compute a realistic price-rating badge for a car.
  * 1) Prefer same make+model comparable set (>= 3 samples).
@@ -592,12 +593,16 @@ const CarCard = memo(function CarCard({
         {car.image && (
           <img
             ref={imgRef}
-            src={car.image}
+            src={upgradeBbcdnUrl(car.image)}
             alt={`${car.make} ${car.model}`}
             className={`h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] ${loaded ? "opacity-100" : "opacity-0"}`}
             loading="lazy"
             onLoad={() => setLoaded(true)}
-            onError={() => onImageError?.(car.id)}
+            onError={e => {
+              const el = e.currentTarget
+              if (el.src !== car.image) { el.src = car.image!; return }
+              onImageError?.(car.id)
+            }}
           />
         )}
         {/* Gradient overlay */}
@@ -724,12 +729,16 @@ const CarListItem = memo(function CarListItem({
           {car.image && (
             <img
               ref={imgRef}
-              src={car.image}
+              src={upgradeBbcdnUrl(car.image)}
               alt={`${car.make} ${car.model}`}
               className={`h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] ${imgLoaded ? "opacity-100" : "opacity-0"}`}
               loading="lazy"
               onLoad={() => setImgLoaded(true)}
-              onError={() => onImageError?.(car.id)}
+              onError={e => {
+                const el = e.currentTarget
+                if (el.src !== car.image) { el.src = car.image!; return }
+                onImageError?.(car.id)
+              }}
             />
           )}
           {/* Badges on image */}
@@ -842,10 +851,14 @@ const CarListItem = memo(function CarListItem({
                       className="relative flex-shrink-0 w-28 h-20 sm:w-36 sm:h-24 rounded-xl overflow-hidden cursor-pointer group/thumb border border-border hover:border-primary/30 transition-colors"
                     >
                       <img
-                        src={src}
+                        src={upgradeBbcdnUrl(src)}
                         alt={`${car.make} ${car.model} ${i + 1}`}
                                                 className="h-full w-full object-cover transition-transform duration-300 group-hover/thumb:scale-105"
                         loading="lazy"
+                        onError={e => {
+                          const el = e.currentTarget
+                          if (el.src !== src) el.src = src
+                        }}
                       />
                       <div className="absolute inset-0 bg-black/0 group-hover/thumb:bg-black/20 transition-colors flex items-center justify-center">
                         <Maximize2 className="h-4 w-4 text-white opacity-0 group-hover/thumb:opacity-100 transition-opacity" />

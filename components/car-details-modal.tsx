@@ -12,6 +12,7 @@ import {
 import { type Car as CarType, formatMileage, formatCarTitle } from "@/lib/data"
 import { useSettings } from "@/lib/settings-context"
 import { t } from "@/lib/i18n"
+import { upgradeBbcdnUrl } from "@/lib/image-upgrade"
 
 /* ───── Cost Calculator ───── */
 function calcTotalCost(price: number) {
@@ -167,9 +168,13 @@ function FullscreenGallery({ images, startIndex, onClose }: {
         <AnimatePresence mode="wait">
           <motion.img
             key={idx}
-            src={images[idx]}
+            src={upgradeBbcdnUrl(images[idx])}
             alt={`Photo ${idx + 1} of ${images.length}`}
             crossOrigin="anonymous"
+            onError={e => {
+              const el = e.currentTarget
+              if (el.src !== images[idx]) el.src = images[idx]
+            }}
             initial={{ opacity: 0, scale: 0.97 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.97 }}

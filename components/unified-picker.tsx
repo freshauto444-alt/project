@@ -10,6 +10,7 @@ import {
 } from "lucide-react"
 import { type Car as CarType, formatCarTitle } from "@/lib/data"
 import { calcTotalCost, SOURCE_SITES, ratePriceVsMarket, PRICE_RATING_CONFIG } from "@/lib/constants"
+import { upgradeBbcdnUrl } from "@/lib/image-upgrade"
 import { t, tOpt, tp, type Language } from "@/lib/i18n"
 import { useSettings } from "@/lib/settings-context"
 
@@ -1022,17 +1023,6 @@ function AIChat({
 }
 
 // ─── ResultCard ───────────────────────────────────────────────────────────────
-
-// Bytbil photos come from BigBuy CDN (bbcdn.io). Listing pages hand out
-// `rule=legacy-main` (320×213) which is pixel-doubled on a 600px+ card.
-// Probed valid named presets: legacy-main (320×213), legacy-gallery
-// (240×180), legacy-full (575×383). legacy-large/xlarge/original/hires/etc
-// all 404. legacy-full is the highest-res rule the CDN exposes, ~2× the
-// resolution of legacy-main and ~3× the file size. Worth the swap.
-function upgradeBbcdnUrl(url: string | null | undefined): string {
-  if (!url || !url.includes("bbcdn.io")) return url ?? ""
-  return url.replace(/rule=legacy-(main|gallery|thumbnail)\b/i, "rule=legacy-full")
-}
 
 function ResultCard({ car, onClick, allCars }: { car: CarType; onClick: () => void; allCars: CarType[] }) {
   const { language } = useSettings()
@@ -2652,19 +2642,27 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
       const data = await res.json()
       const newCars = (data.cars ?? []).map(mapApiCar)
 
-      // Merge new + old, with two safeguards:
+      // Merge new + old, with three safeguards:
       //   1. New cars go FIRST so the latest pick tops the list.
-      //   2. Old cars are kept only if they still match the NEW pick's
-      //      budget + year envelope. Without this, switching from a 40-60k
-      //      suggestion to an 80-100k one left 40k cars below the new
-      //      80k+ results — confusing for the user.
+      //   2. Old cars are kept only if their MAKE matches the new pick.
+      //      Without this, a Skoda search left old Skodas in the list when
+      //      the user switched to a MINI Cooper search — the relevance
+      //      sort then bubbled the newer Skodas above the older MINIs.
+      //   3. Old cars also have to fit the new pick's budget + year window.
       const sp = suggestion.searchParams
+      const newMake = (sp.make ?? "").toLowerCase()
       const newBudgetMin = sp.budget_min ?? null
       const newBudgetMax = sp.budget_max ?? null
       const newYearFrom = sp.year_from ?? null
       const newYearTo = sp.year_to ?? null
 
       const matchesNewCriteria = (c: CarType): boolean => {
+        if (newMake) {
+          const carMake = (c.make ?? "").toLowerCase()
+          if (carMake && carMake !== newMake && !carMake.includes(newMake) && !newMake.includes(carMake)) {
+            return false
+          }
+        }
         const price = (c as any).price ?? c.price
         if (typeof price === "number") {
           if (newBudgetMin != null && price < newBudgetMin) return false
