@@ -243,35 +243,18 @@ function FullscreenGallery({ images, startIndex, onClose }: {
   )
 }
 
-/* ───── 360-degree interactive viewer ───── */
+/* ───── Hero gallery preview (click to open fullscreen lightbox) ───── */
 function InteractiveViewer({ car, onOpenGallery }: { car: CarType; onOpenGallery: (idx: number) => void }) {
-  const [rotation, setRotation] = useState(0)
-  const [isDragging, setIsDragging] = useState(false)
-  const lastX = useRef(0)
   const allImages = [car.image, ...car.gallery.filter(g => g !== car.image)]
-
-  const onStart = useCallback((x: number) => { setIsDragging(true); lastX.current = x }, [])
-  const onMove = useCallback((x: number) => {
-    if (!isDragging) return
-    setRotation(r => r + (x - lastX.current) * 0.5)
-    lastX.current = x
-  }, [isDragging])
-  const onEnd = useCallback(() => setIsDragging(false), [])
 
   return (
     <div>
       {/* Hero image */}
       <div
-        onMouseDown={e => onStart(e.clientX)}
-        onMouseMove={e => onMove(e.clientX)}
-        onMouseUp={onEnd}
-        onMouseLeave={onEnd}
-        onTouchStart={e => onStart(e.touches[0].clientX)}
-        onTouchMove={e => onMove(e.touches[0].clientX)}
-        onTouchEnd={onEnd}
-        className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl bg-card cursor-grab active:cursor-grabbing select-none"
+        onClick={() => onOpenGallery(0)}
+        className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl bg-card cursor-zoom-in select-none"
       >
-        <div className="absolute inset-0 flex items-center justify-center" style={{ transform: `perspective(1000px) rotateY(${rotation}deg)` }}>
+        <div className="absolute inset-0 flex items-center justify-center">
           {car.image && (
             <img
               src={upgradeBbcdnUrl(car.image)}
@@ -287,17 +270,7 @@ function InteractiveViewer({ car, onOpenGallery }: { car: CarType; onOpenGallery
           )}
         </div>
         <div className="absolute inset-0 bg-gradient-to-t from-[#080808]/60 via-transparent to-transparent" />
-        <div className="absolute bottom-3 left-3 flex items-center gap-1.5 text-[10px] text-white/50">
-          <Move className="h-3 w-3" />{"Перетягніть для огляду 360\u00B0"}
-        </div>
         <div className="absolute top-3 right-3 flex items-center gap-1.5">
-          <button
-            onClick={e => { e.stopPropagation(); setRotation(0) }}
-            className="flex items-center gap-1 rounded-lg bg-black/40 backdrop-blur-sm px-2 py-1 text-[10px] text-white/70 hover:text-white transition-colors cursor-pointer"
-            aria-label="Reset rotation"
-          >
-            <RotateCcw className="h-2.5 w-2.5" />
-          </button>
           <button
             onClick={e => { e.stopPropagation(); onOpenGallery(0) }}
             className="flex items-center gap-1 rounded-lg bg-black/40 backdrop-blur-sm px-2 py-1 text-[10px] text-white/70 hover:text-white transition-colors cursor-pointer"
