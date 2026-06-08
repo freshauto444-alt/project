@@ -128,9 +128,19 @@ function normalizeBrand(raw: string): string {
 // whole search returns 0 even though /volkswagen/passat is the correct URL.
 // Matches: B9, W213, F30, G05, C8, E46 — letter + 1-3 digits at the end of
 // the model, separated by space or hyphen. Single-word models are unchanged.
+//
+// Exception: AMG/M/RS performance trims look the same syntactically (e63, m5)
+// but are model variants, not generation codes — preserve them when the prefix
+// is a performance label or empty.
 function stripGenerationSuffix(model: string | null | undefined): string | null {
   if (!model) return model ?? null
-  return model.replace(/[\s-]+[bwfgce]\d{1,3}$/i, "").trim() || model
+  const trimmed = model.trim()
+  const match = trimmed.match(/^(.*?)[\s-]+[bwfgce]\d{1,3}$/i)
+  if (!match) return trimmed
+  const base = match[1].trim()
+  // Performance prefixes — "amg e63", "m e63" etc. keep the full string.
+  if (/^(amg|m|rs|s|gt)$/i.test(base)) return trimmed
+  return base || trimmed
 }
 
 function normalizeColor(text: string): string | null {
@@ -644,6 +654,16 @@ ${prevContext}
 - "октавія" / "октавия" → make: "Skoda", model: "Octavia"
 - "мазда 6" → make: "Mazda", model: "6"
 
+ПЕРФОРМАНС-ВАРІАНТИ (AMG / M / RS / S / GT) — ЗБЕРІГАЙ trim-цифри, не нормалізуй до базового класу:
+- "мерс е63" / "e63" / "amg e63" → make: "Mercedes-Benz", model: "E 63"
+- "мерс с63" / "c63 amg" → make: "Mercedes-Benz", model: "C 63"
+- "м5" / "bmw m5" → make: "BMW", model: "M5"
+- "м3" / "bmw m3" → make: "BMW", model: "M3"
+- "рс6" / "audi rs6" → make: "Audi", model: "RS6"
+- "s3" / "audi s3" → make: "Audi", model: "S3"
+- "гольф r" / "golf r" → make: "Volkswagen", model: "Golf R"
+- НЕ перетворюй E63 на "E-Class" — клієнт хоче конкретно AMG-версію, базовий клас занадто широкий.
+
 ПРИВІД:
 - "повний привід" / "4х4" / "AWD" → drive: "AWD"
 - "передній" / "FWD" → drive: "FWD"
@@ -1150,6 +1170,15 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
           if (mbClass) {
             const cls = mbClass[1].toLowerCase()
             const carTrimmed = carModel.trim().toLowerCase()
+            // Commercial / non-class models that start with the same letter
+            // get pulled in by Bytbil free-text search. E-Klasse query brings
+            // back "E Vito Tourer" (bytbil reuses the E letter for an
+            // E-anything tag). Drop these explicitly.
+            const COMMERCIAL_LOOKALIKES = [
+              "vito", "v-class", "v klasse", "viano", "metris", "citan",
+              "sprinter", "vario", "marco polo", "eqv",
+            ]
+            if (COMMERCIAL_LOOKALIKES.some(k => carTrimmed.includes(k))) return false
             if (new RegExp(`^${cls}(?:[\\s-]|\\d)`, "i").test(carTrimmed)) return true
             return false
           }

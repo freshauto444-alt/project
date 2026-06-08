@@ -373,6 +373,16 @@ whyRecommended (РІВНО 2 короткі речення, ~25 слів кож�
 concerns (1 коротке речення, мʼяко): загальний нюанс класу. Без сум ремонтів, без кодів моторів, без слів "проблема/ремонт/ризик".
 model_search = назва моделі lowercase, БЕЗ префіксу марки, БЕЗ маркера покоління (B8, B9, F30, G20, W213, E46, C8 тощо — це КОДИ платформ, а не модель). Приклади: "Audi A7" → "a7"; "BMW 3 Series Touring" → "3er"; "Mercedes C-Class" → "c-klasse"; "Volvo V60" → "v60"; "VW Passat B9" → "passat"; "BMW X5 G05" → "x5". Підбирай ВИКЛЮЧНО код базової моделі — покоління визначається через yearRange.
 
+ВИНЯТОК — ПЕРФОРМАНС-ВАРІАНТИ (AMG / M / RS / S-line / GT). Тут цифра після літери — це trim, не покоління. Зберігай повну назву:
+• "Mercedes E63 AMG" → model_search="e 63" (НЕ "e-klasse" — клієнт хоче конкретно AMG-версію)
+• "Mercedes C63 AMG" → model_search="c 63"
+• "BMW M5" → model_search="m5"
+• "BMW M3 Competition" → model_search="m3"
+• "Audi RS6" → model_search="rs6"
+• "Audi S3" → model_search="s3"
+• "VW Golf R" → model_search="golf r"
+Якщо клієнт назвав AMG/M/RS — пропонуй ці моделі з повним trim. Базовий клас (E-Klasse, 5er) — для не-перформанс запитів.
+
 Поверни ТІЛЬКИ JSON-масив з РІВНО 3 об'єктами (без markdown, без тексту до/після):
 [{"make":"BMW","model_display":"X5","model_search":"x5","yearRange":"2019-2020","priceRange":"44000-50000","whyRecommended":"...","concerns":"...","confidence":"high","budgetFit":"over","overBy":7000,"feasibilityWarning":null}]`
 
