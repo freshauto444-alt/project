@@ -2459,18 +2459,14 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
         }),
       })
       const data = await res.json()
-      const rawNewCars = (data.cars ?? []).map(mapApiCar)
+      const newCars = (data.cars ?? []).map(mapApiCar)
 
-      // Merge new + old, with three safeguards:
+      // Merge new + old, with two safeguards:
       //   1. New cars go FIRST so the latest pick tops the list.
-      //   2. New cars are filtered against the suggestion's budget+year
-      //      envelope. Parser intentionally receives no year filter (so a
-      //      "2017+" form input isn't narrowed by AI to "2018-2020"), but
-      //      that leaves the door open for parser to return e.g. a 2005
-      //      Golf for a "Golf GTI 2018-2022" suggestion. Filter here.
-      //   3. Old cars are kept only if they still match the NEW pick's
-      //      envelope, so switching from a 40-60k suggestion to an 80-100k
-      //      one doesn't leave 40k cars below the new 80k+ results.
+      //   2. Old cars are kept only if they still match the NEW pick's
+      //      budget + year envelope. Without this, switching from a 40-60k
+      //      suggestion to an 80-100k one left 40k cars below the new
+      //      80k+ results — confusing for the user.
       const sp = suggestion.searchParams
       const newBudgetMin = sp.budget_min ?? null
       const newBudgetMax = sp.budget_max ?? null
@@ -2491,9 +2487,6 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
         return true
       }
 
-      const newCars = rawNewCars.filter(matchesNewCriteria)
-      const filteredOutCount = rawNewCars.length - newCars.length
-
       setResults(prev => {
         const newUrls = new Set(newCars.map((c: CarType) => c.sourceUrl || (c as any).source_url))
         const keptOld = prev
@@ -2507,11 +2500,6 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
         setApprovedIndices(prev => new Set(prev).add(idx))
         setPhase("results")
         setLoadingResults(false)
-      } else if (rawNewCars.length > 0 && filteredOutCount > 0) {
-        // Parser returned cars but all fell outside the suggestion envelope
-        // (typically: AI suggested 2018-2022 model, parser returned 2005/2009).
-        // Distinct message so the user can adjust instead of blaming "немає".
-        setError(`Знайшлось ${rawNewCars.length} ${suggestion.make} ${suggestion.model}, але поза діапазоном (${newYearFrom ?? "?"}-${newYearTo ?? "?"} / €${newBudgetMin ?? "?"}-${newBudgetMax ?? "?"}). Спробуйте інший варіант або розширте критерії.`)
       } else {
         // No cars found — show message, DON'T mark as approved
         setError(data.message || `За параметрами ${suggestion.make} ${suggestion.model} авто не знайдено. Спробуйте інший варіант.`)
