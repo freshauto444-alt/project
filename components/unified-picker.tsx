@@ -55,6 +55,9 @@ interface StreamPayload {
   year_to?: number | null
   budget_min?: number | null
   budget_max?: number | null
+  // Full chat preferences for the stream route to apply the same client-side
+  // filter as the blocking /api/ai-picker handler — keeps Vito/M50i guards.
+  chatPreferences?: Record<string, unknown> | null
 }
 interface StreamCallbacks {
   onCars?: (cars: CarType[], source: string) => void
@@ -2413,104 +2416,79 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
     const formYearFrom = byId.year?.selected[0] ? parseInt(byId.year.selected[0]) : null
     const formYearTo = byId.year?.selected[1] ? parseInt(byId.year.selected[1]) : null
 
-    try {
-      const res = await fetch("/api/ai-picker", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({
-          messages: [],
-          answers,
-          triggerSearch: true,
-          clientOrderId: makeUuid(),
-          chatPreferences: {
-            pairs: [{ make: suggestion.searchParams.make, model: suggestion.searchParams.model }],
-            fuel: suggestion.searchParams.fuel ?? null,
-            body_type: suggestion.searchParams.body_type ?? null,
-            // Use USER's budget from questionnaire, not Claude's price estimate
-            budget_min: userBudget.min || suggestion.searchParams.budget_min || 20000,
-            budget_max: userBudget.max || suggestion.searchParams.budget_max || undefined,
-            // Year filter precedence: explicit form value > AI's yearRange.
-            // Passing AI's yearRange to the parser lets AutoScout24 (fregfrom)
-            // and mobile.de (minFirstRegistrationDate) filter at the source —
-            // way less wasted traffic than tugging all years and filtering
-            // client-side. Niche models (Infiniti, narrow E-Class trims) are
-            // protected on the server via searchWithFallback's step 3, which
-            // drops year if the windowed search returns 0.
-            year_from: formYearFrom ?? suggestion.searchParams.year_from ?? null,
-            year_to: formYearTo ?? suggestion.searchParams.year_to ?? null,
-            transmission: suggestion.searchParams.transmission ?? null,
-            drive: suggestion.searchParams.drive ?? null,
-            budget: null,
-            color: formColor,
-            mileage_min: formMileageMin,
-            mileage_max: formMileageMax,
-            required_options: [],
-            displacement_min: formEngineMin,
-            displacement_max: formEngineMax,
-            hp_min: formHpMin,
-            seats_min: formSeatsMin,
-            doors: formDoors,
-            interior_material: formInterior,
-            purpose_body_types: [],
-          },
-        }),
-      })
-      const data = await res.json()
-      const newCars = (data.cars ?? []).map(mapApiCar)
-
-      // Merge new + old, with two safeguards:
-      //   1. New cars go FIRST so the latest pick tops the list.
-      //   2. Old cars are kept only if they still match the NEW pick's
-      //      budget + year envelope. Without this, switching from a 40-60k
-      //      suggestion to an 80-100k one left 40k cars below the new
-      //      80k+ results — confusing for the user.
-      const sp = suggestion.searchParams
-      const newBudgetMin = sp.budget_min ?? null
-      const newBudgetMax = sp.budget_max ?? null
-      const newYearFrom = sp.year_from ?? null
-      const newYearTo = sp.year_to ?? null
-
-      const matchesNewCriteria = (c: CarType): boolean => {
-        const price = (c as any).price ?? c.price
-        if (typeof price === "number") {
-          if (newBudgetMin != null && price < newBudgetMin) return false
-          if (newBudgetMax != null && price > newBudgetMax) return false
-        }
-        const year = (c as any).year ?? c.year
-        if (typeof year === "number") {
-          if (newYearFrom != null && year < newYearFrom) return false
-          if (newYearTo   != null && year > newYearTo)   return false
-        }
-        return true
-      }
-
-      setResults(prev => {
-        const newUrls = new Set(newCars.map((c: CarType) => c.sourceUrl || (c as any).source_url))
-        const keptOld = prev
-          .filter(c => !newUrls.has(c.sourceUrl || (c as any).source_url))
-          .filter(matchesNewCriteria)
-        return [...newCars, ...keptOld]
-      })
-
-      if (newCars.length > 0) {
-        // Success — mark approved and switch to results
-        setApprovedIndices(prev => new Set(prev).add(idx))
-        setPhase("results")
-        setLoadingResults(false)
-      } else {
-        // No cars found — show message, DON'T mark as approved
-        setError(data.message || `За параметрами ${suggestion.make} ${suggestion.model} авто не знайдено. Спробуйте інший варіант.`)
-      }
-    } catch (e: any) {
-      if (e.name !== "AbortError") {
-        setError(`Не вдалося знайти ${suggestion.make} ${suggestion.model}. Спробуйте інший варіант.`)
-      }
-    } finally {
-      // Only clear spinner if this call wasn't aborted by a newer one — otherwise
-      // we'd hide the spinner the new call just turned on.
-      if (!controller.signal.aborted) setSearchingIndex(null)
+    // Build the full chat preferences once — the stream route uses them for
+    // both the parser query and the post-fetch filter (Vito/M50i guards).
+    const chatPrefs = {
+      pairs: [{ make: suggestion.searchParams.make, model: suggestion.searchParams.model }],
+      fuel: suggestion.searchParams.fuel ?? null,
+      body_type: suggestion.searchParams.body_type ?? null,
+      budget_min: userBudget.min || suggestion.searchParams.budget_min || 20000,
+      budget_max: userBudget.max || suggestion.searchParams.budget_max || null,
+      year_from: formYearFrom ?? suggestion.searchParams.year_from ?? null,
+      year_to: formYearTo ?? suggestion.searchParams.year_to ?? null,
+      transmission: suggestion.searchParams.transmission ?? null,
+      drive: suggestion.searchParams.drive ?? null,
+      budget: null,
+      color: formColor,
+      mileage_min: formMileageMin,
+      mileage_max: formMileageMax,
+      required_options: [],
+      displacement_min: formEngineMin,
+      displacement_max: formEngineMax,
+      hp_min: formHpMin,
+      seats_min: formSeatsMin,
+      doors: formDoors,
+      interior_material: formInterior,
+      purpose_body_types: [],
     }
+
+    // Stream results progressively — first batch (cache or fastest source)
+    // shows in <1s, slower sources fill in over the next few seconds.
+    let receivedAny = false
+    const seenUrls = new Set<string>()
+    // Drop stale results from previous picks BEFORE any new cars arrive so the
+    // user sees the list reset to empty, not the previous suggestion's cars.
+    setResults([])
+    setPhase("results")
+    setLoadingResults(true)
+
+    await streamSearch(
+      { chatPreferences: chatPrefs },
+      controller.signal,
+      {
+        onCars: (cars) => {
+          receivedAny = true
+          const fresh: CarType[] = []
+          for (const c of cars) {
+            const key = c.sourceUrl || (c as any).source_url
+            if (key && seenUrls.has(key)) continue
+            if (key) seenUrls.add(key)
+            fresh.push(c)
+          }
+          if (fresh.length === 0) return
+          // setResults([]) ran before streamSearch — prev only contains cars
+          // appended by earlier onCars events in THIS stream, all of which are
+          // already deduped via seenUrls and match the suggestion envelope.
+          setResults(prev => [...prev, ...fresh])
+        },
+        onDone: () => {
+          setLoadingResults(false)
+          if (receivedAny) {
+            setApprovedIndices(prev => new Set(prev).add(idx))
+          } else {
+            setError(`За параметрами ${suggestion.make} ${suggestion.model} авто не знайдено. Спробуйте інший варіант.`)
+          }
+          if (!controller.signal.aborted) setSearchingIndex(null)
+        },
+        onError: (msg) => {
+          setLoadingResults(false)
+          if (!receivedAny) {
+            setError(`Не вдалося знайти ${suggestion.make} ${suggestion.model}: ${msg}`)
+          }
+          if (!controller.signal.aborted) setSearchingIndex(null)
+        },
+      },
+    )
   }, [suggestions, answers])
 
   // ── Fallback: search all without suggestions ──────────────────────────
