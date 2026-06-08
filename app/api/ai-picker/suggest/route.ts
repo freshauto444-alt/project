@@ -369,6 +369,18 @@ yearRange має відповідати РЕАЛЬНИМ рокам конкре
 • Клієнт year_to=2015 → бери старіше покоління.
 • Клієнт без year-обмежень → бери покоління що ВКЛАДАЄТЬСЯ у бюджет (для €30k turnkey преміуму F30 реальніше за G20).
 
+═══ ВАРІАТИВНІСТЬ — НЕ ПОВТОРЮЙ ТИПОВІ ПАРИ ═══
+
+Канонічні «очевидні» пари по сегментах (їх легко вгадати з тренувальних даних):
+• Молодіжне спортивне: Golf GTI + Civic Type R + Toyota GR86/Yaris
+• Сімейне €30-40k: Skoda Octavia + VW Passat + Toyota Corolla
+• Преміум €40-60k: BMW 5er + Mercedes E-Class + Audi A6
+• SUV сімейне: Skoda Kodiaq + Hyundai Tucson + Toyota RAV4
+
+ПРАВИЛО: щонайменше 1 з 3 пропозицій має бути НЕ-канонічною — модель якої клієнт міг не подумати, але реально підходить. Наприклад замість Civic Type R → MINI JCW або Hyundai i30 N; замість Octavia → Mazda 6 або Volvo V40; замість E-Class → Volvo S90 або Lexus ES.
+
+ВИБІР НЕ-канонічного варіанту обґрунтовуй конкретно (а не «теж непогана»): рідкісніший на ринку = менше падає в ціні; нижчий пробіг по сегменту; недооцінений за надійністю; нюанс комплектації що зустрічається саме тут.
+
 whyRecommended (РІВНО 2 короткі речення, ~25 слів кожне): одне про конкретну характеристику+перевагу, друге про репутацію (ADAC/Euro NCAP/J.D. Power) АБО ринок України.
 concerns (1 коротке речення, мʼяко): загальний нюанс класу. Без сум ремонтів, без кодів моторів, без слів "проблема/ремонт/ризик".
 model_search = назва моделі lowercase, БЕЗ префіксу марки, БЕЗ маркера покоління (B8, B9, F30, G20, W213, E46, C8 тощо — це КОДИ платформ, а не модель). Приклади: "Audi A7" → "a7"; "BMW 3 Series Touring" → "3er"; "Mercedes C-Class" → "c-klasse"; "Volvo V60" → "v60"; "VW Passat B9" → "passat"; "BMW X5 G05" → "x5". Підбирай ВИКЛЮЧНО код базової моделі — покоління визначається через yearRange.
@@ -453,6 +465,11 @@ ${hasBudget
           body: JSON.stringify({
             model: "claude-sonnet-4-6",
             max_tokens: 1000,
+            // Temperature 1.0 + the variability rule in the prompt pushes the
+            // model off canonical "Golf GTI / Civic Type R" combos. Default
+            // (~1.0) was already this — making it explicit so any future
+            // tuning is intentional, not accidental.
+            temperature: 1.0,
             stream: true,
             system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
             messages: [{ role: "user", content: userMessage }],

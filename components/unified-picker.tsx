@@ -772,11 +772,19 @@ function AIChat({
   cars,
   onNewCars,
   onPrefsChange,
+  freeText,
+  approvedSuggestion,
+  rejectedSuggestions,
 }: {
   answers: Answer[]
   cars: CarType[]
   onNewCars: (cars: CarType[]) => void
   onPrefsChange?: (prefs: any) => void
+  // Journey context — what the user told us up to this point, so the chat
+  // doesn't ask things we already know.
+  freeText?: string
+  approvedSuggestion?: { make: string; model: string; yearRange: string; whyRecommended: string } | null
+  rejectedSuggestions?: { make: string; model: string }[]
 }) {
   const { language } = useSettings()
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -790,27 +798,48 @@ function AIChat({
   useEffect(() => {
     if (messages.length > 1) return
     const tags = buildTags(answers)
-    const intro =
-      tags.length > 0
-        ? (language === "uk"
-            ? `Знайдено ${cars.length} варіантів за вашими критеріями (${tags.slice(0, 3).join(", ")}${tags.length > 3 ? " та інші" : ""}).${
-                cars.length === 0
-                  ? " Можу запустити пошук на європейських майданчиках — зазвичай знаходжу 15-30 свіжих варіантів. Скажіть що шукаєте."
-                  : " Можу детально розповісти про будь-яке авто або уточнити підбір."
-              }`
-            : `Found ${cars.length} matches for your criteria (${tags.slice(0, 3).join(", ")}${tags.length > 3 ? " and more" : ""}).${
-                cars.length === 0
-                  ? " I can search European marketplaces — usually 15-30 fresh options. Tell me what you need."
-                  : " I can dive into any car or refine the selection."
-              }`)
-        : tp("chat_intro", language)
+    let intro: string
+    if (approvedSuggestion && language === "uk") {
+      // Reference the picked card so the chat picks up where the picker left
+      // off instead of acting like a stranger. whyRecommended is the AI's own
+      // earlier reasoning — repeating it confirms continuity.
+      const why = approvedSuggestion.whyRecommended?.split(/[.!?]/)[0]?.trim()
+      intro = `Бачу, обрали ${approvedSuggestion.make} ${approvedSuggestion.model} (${approvedSuggestion.yearRange}). ${
+        why ? why + ". " : ""
+      }Знайдено ${cars.length} варіантів. Можу заглибитись у конкретне авто, порівняти з альтернативою або підстроїти підбір — що цікаво?`
+    } else if (approvedSuggestion) {
+      intro = `Picked ${approvedSuggestion.make} ${approvedSuggestion.model} (${approvedSuggestion.yearRange}). ${cars.length} matches. Want a deep dive, a comparison, or to refine?`
+    } else if (tags.length > 0) {
+      intro = language === "uk"
+        ? `Знайдено ${cars.length} варіантів за вашими критеріями (${tags.slice(0, 3).join(", ")}${tags.length > 3 ? " та інші" : ""}).${
+            cars.length === 0
+              ? " Можу запустити пошук на європейських майданчиках — зазвичай знаходжу 15-30 свіжих варіантів. Скажіть що шукаєте."
+              : " Можу детально розповісти про будь-яке авто або уточнити підбір."
+          }`
+        : `Found ${cars.length} matches for your criteria (${tags.slice(0, 3).join(", ")}${tags.length > 3 ? " and more" : ""}).${
+            cars.length === 0
+              ? " I can search European marketplaces — usually 15-30 fresh options. Tell me what you need."
+              : " I can dive into any car or refine the selection."
+          }`
+    } else {
+      intro = tp("chat_intro", language)
+    }
     setMessages([{ role: "assistant", content: intro }])
-  }, [cars.length, language])
+  }, [cars.length, language, approvedSuggestion])
 
   useEffect(() => {
     const el = messagesContainerRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [messages, loading, searching])
+
+  // Compact journey-context blob — passed with every chat-side request so
+  // the server prompt knows what the user told us before reaching the chat.
+  // Keeps server payload stable and easy to drop into a single prompt block.
+  const journey = {
+    freeText: freeText?.trim() || null,
+    approvedSuggestion: approvedSuggestion ?? null,
+    rejectedSuggestions: rejectedSuggestions ?? [],
+  }
 
   // Запуск парсера з передачею chatPreferences
   const runSearch = async (orderId: string, fullMessages: ChatMessage[]) => {
@@ -826,6 +855,7 @@ function AIChat({
           triggerSearch: true,
           clientOrderId: orderId,
           chatPreferences, // Pass previous preferences for cumulative search
+          journey,
         }),
       })
       const data = await res.json()
@@ -863,6 +893,7 @@ function AIChat({
           triggerSearch: true,
           clientOrderId: clientOrderId ?? makeUuid(),
           chatPreferences: nextPrefs,
+          journey,
         }),
       })
       const data = await res.json()
@@ -892,6 +923,7 @@ function AIChat({
           answers,
           cars: cars.slice(0, 8),
           chatPreferences, // Always pass current preferences
+          journey,
         }),
       })
       const data = await res.json()
@@ -1265,6 +1297,7 @@ function PickerSortSelect({
 
 function ResultsScreen({
   answers, cars, loading, onSelectCar, onReset, onBack,
+  freeText, approvedSuggestion, rejectedSuggestions,
 }: {
   answers: Answer[]
   cars: CarType[]
@@ -1272,6 +1305,9 @@ function ResultsScreen({
   onSelectCar: (car: CarType) => void
   onReset: () => void
   onBack: () => void
+  freeText?: string
+  approvedSuggestion?: { make: string; model: string; yearRange: string; whyRecommended: string } | null
+  rejectedSuggestions?: { make: string; model: string }[]
 }) {
   const { language } = useSettings()
   const [allCars, setAllCars] = useState<CarType[]>(cars)
@@ -1397,7 +1433,15 @@ function ResultsScreen({
 
       <CriteriaBar answers={answers} onReset={onReset} />
 
-      <AIChat answers={answers} cars={allCars} onNewCars={handleNewCars} onPrefsChange={setChatPrefsRef} />
+      <AIChat
+        answers={answers}
+        cars={allCars}
+        onNewCars={handleNewCars}
+        onPrefsChange={setChatPrefsRef}
+        freeText={freeText}
+        approvedSuggestion={approvedSuggestion}
+        rejectedSuggestions={rejectedSuggestions}
+      />
 
       {/* Results header */}
       <div className="flex items-center justify-between">
@@ -2867,6 +2911,15 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
             onSelectCar={onSelectCar}
             onReset={reset}
             onBack={goBackToForm}
+            freeText={freeText}
+            approvedSuggestion={(() => {
+              const idx = [...approvedIndices][approvedIndices.size - 1]
+              const s = idx != null ? suggestions[idx] : null
+              return s ? { make: s.make, model: s.model, yearRange: s.yearRange, whyRecommended: s.whyRecommended } : null
+            })()}
+            rejectedSuggestions={suggestions
+              .filter((_, i) => !approvedIndices.has(i))
+              .map(s => ({ make: s.make, model: s.model }))}
           />
         </div>
       )}

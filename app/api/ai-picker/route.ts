@@ -1379,6 +1379,7 @@ export async function POST(req: Request) {
     clientOrderId,
     loadMore,
     chatPreferences,
+    journey, // { freeText, approvedSuggestion, rejectedSuggestions }
   } = await req.json()
 
   const tags: string[] = []
@@ -1549,10 +1550,34 @@ export async function POST(req: Request) {
     ? `\nПоточні параметри пошуку: ${JSON.stringify(chatPreferences)}`
     : ""
 
+  // Journey context — what the picker stage already learned from the client.
+  // Lets the chat reference the original free-text request, acknowledge the
+  // suggestion the client approved, and steer away from cards they rejected.
+  const journeyLines: string[] = []
+  if (journey?.freeText) {
+    journeyLines.push(`• Вільний опис на старті: "${journey.freeText}"`)
+  }
+  if (journey?.approvedSuggestion) {
+    const s = journey.approvedSuggestion
+    journeyLines.push(`• Клієнт обрав пропозицію: ${s.make} ${s.model} (${s.yearRange ?? "?"})`)
+    if (s.whyRecommended) {
+      journeyLines.push(`  Твоє попереднє обґрунтування: "${s.whyRecommended}"`)
+    }
+  }
+  if (Array.isArray(journey?.rejectedSuggestions) && journey.rejectedSuggestions.length > 0) {
+    const list = journey.rejectedSuggestions
+      .map((s: { make: string; model: string }) => `${s.make} ${s.model}`)
+      .join(", ")
+    journeyLines.push(`• Відкинув альтернативи: ${list} — не повторюй ці моделі без вагомої причини`)
+  }
+  const journeyContext = journeyLines.length > 0
+    ? `\n═══ КОНТЕКСТ ВИБОРУ КЛІЄНТА ═══\n${journeyLines.join("\n")}\nКористуйся цим — клієнт очікує, що ти пам'ятаєш про що ми домовилися. Якщо рекомендуєш інше, чесно скажи чому змінив думку.\n`
+    : ""
+
   const systemPrompt = `Ти — старший менеджер Fresh Auto. 8+ років підбираєш та ввозиш авто з Німеччини, Швеції, Нідерландів. Знаєш ринок як свої 5 пальців. Спілкуєшся українською — як жива людина, не як бот. БЕЗ емодзі, markdown, зірочок, нумерованих списків.
 
 Критерії клієнта з анкети: ${tags.join(", ") || "не заповнені"}
-${prefsContext}
+${prefsContext}${journeyContext}
 
 ${hasNoCars
     ? "В каталозі Fresh Auto ЗАРАЗ нічого немає за цими критеріями."
