@@ -913,7 +913,7 @@ async function callParserInstant(
     if (payload.transmission) params.set("transmission", String(payload.transmission))
     if (payload.body_type) params.set("body_type", String(payload.body_type))
     if (payload.drive) params.set("drive", String(payload.drive))
-    params.set("limit", "50")
+    params.set("limit", "100")
 
     const url = `${PARSER_URL}/search/instant?${params}`
     // Diagnostic — log every parser call so you can correlate "0 cars found"
@@ -1129,7 +1129,9 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
             // BMW series: "4" matches "420", "430", "440", "M4", "Serie 4", "4er Reihe"
             // but NOT "X4", "318", "520". Guard against X-class (suv) with negative lookbehind.
             if (carModel.startsWith(series)) return true
-            if (carModel.includes(`m${series}`)) return true
+            // M3 must match "M3 Competition" but NOT "M340i" / "M3 GTS"
+            // Negative lookahead forbids trailing digit after the M-letter form.
+            if (new RegExp(`m${series}(?![0-9])`, "i").test(carModel)) return true
             // Match "series N" / "serie N" / "Nreihe" / "Ner" anywhere
             const seriesRe = new RegExp(`(?:^|\\s|^serie\\s*|^series\\s*)${series}(?:er|e|\\s|$)`, "i")
             if (seriesRe.test(carModel)) return true
@@ -1152,10 +1154,14 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
             return false
           }
 
-          // Non-numeric models: "a6" matches "A6", "A6 Avant", "A6 Allroad"
+          // Non-numeric models: "a6" matches "A6", "A6 Avant", "A6 Allroad".
+          // Word-token boundary via digit-guards: "m5" must not match "M50i",
+          // "a6" must not match "a60" (rare but possible AS24 ID strings).
+          // Preceding char: start-of-string OR non-digit. Trailing char: not a digit.
           const reqNorm = reqModel.replace(/[^a-z0-9]/g, "")
           const carNorm = carModel.replace(/[^a-z0-9]/g, "")
-          if (carNorm.startsWith(reqNorm) || carNorm.includes(reqNorm)) return true
+          const tokenRe = new RegExp(`(?:^|[^0-9])${reqNorm}(?![0-9])`, "i")
+          if (tokenRe.test(carNorm)) return true
 
           return false
         })
