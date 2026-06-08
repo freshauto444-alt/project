@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server"
-import { type CarPair, type ChatPreferences, filterCarsClientSide } from "@/lib/car-filter"
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Types
@@ -16,8 +15,35 @@ interface Answer {
   custom: string
 }
 
-// CarPair + ChatPreferences moved to @/lib/car-filter so the streaming route
-// can reuse the same shapes when filtering progressive SSE batches.
+interface CarPair {
+  make: string | null
+  model: string | null
+}
+
+interface ChatPreferences {
+  pairs: CarPair[]
+  fuel: string | null
+  body_type: string | null
+  budget: number | null
+  budget_min: number | null
+  budget_max: number | null
+  color: string | null
+  mileage_max: number | null
+  mileage_min: number | null
+  required_options: string[]
+  year_from: number | null
+  year_to: number | null
+  transmission: string | null
+  drive: string | null
+  displacement_min: number | null
+  displacement_max: number | null
+  hp_min: number | null
+  seats_min: number | null
+  doors: number | null
+  interior_material: string | null
+  purpose_body_types: string[]
+  offset?: number
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Config
@@ -1088,8 +1114,233 @@ async function triggerParser(
   return { count: allCars.length, cars: allCars }
 }
 
-// filterCarsClientSide moved to @/lib/car-filter — shared with the streaming
-// route so progressive SSE batches get the same Vito/M50i guards.
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Client-side filtering — mileage, color, options
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
+  let filtered = [...cars]
+
+  // Model filter — SOFT: parser already filtered by make/model in URL.
+  // Make + Model filter — smart series matching
+  // BMW "4er" → accepts "420", "430", "M4" but NOT "318", "X5"
+  // Audi "a6" → accepts "A6", "A6 Avant" but NOT "A4", "Q5"
+  if (prefs.pairs.length > 0) {
+    const pairsLower = prefs.pairs
+      .filter(p => p.make)
+      .map(p => ({ make: p.make!.toLowerCase(), model: (p.model ?? "").toLowerCase() }))
+
+    if (pairsLower.length > 0) {
+      filtered = filtered.filter(c => {
+        const carMake = (c.make ?? "").toLowerCase()
+        const carModel = (c.model ?? "").toLowerCase()
+        if (!carMake) return true
+
+        return pairsLower.some(({ make: reqMake, model: reqModel }) => {
+          // Make must match
+          if (!carMake.includes(reqMake) && !reqMake.includes(carMake)) return false
+          // If no specific model requested, accept all from this make
+          if (!reqModel) return true
+
+          // Extract series number: "3er" → "3", "4 series" → "4", "a6" → "a6"
+          const seriesMatch = reqModel.match(/^(\d+)/)
+          if (seriesMatch) {
+            const series = seriesMatch[1]
+            // BMW series: "4" matches "420", "430", "440", "M4", "Serie 4", "4er Reihe"
+            // but NOT "X4", "318", "520". Guard against X-class (suv) with negative lookbehind.
+            if (carModel.startsWith(series)) return true
+            // M3 must match "M3 Competition" but NOT "M340i" / "M3 GTS"
+            // Negative lookahead forbids trailing digit after the M-letter form.
+            if (new RegExp(`m${series}(?![0-9])`, "i").test(carModel)) return true
+            // Match "series N" / "serie N" / "Nreihe" / "Ner" anywhere
+            const seriesRe = new RegExp(`(?:^|\\s|^serie\\s*|^series\\s*)${series}(?:er|e|\\s|$)`, "i")
+            if (seriesRe.test(carModel)) return true
+            return false
+          }
+
+          // Mercedes class slug ("c-klasse", "e-klasse", "gla-klasse", "cla-class"…).
+          // Parser hits AS24/Bytbil with the class slug but returned cars come back
+          // with the concrete designation ("C 300 T", "GLA 200", "CLA 180"), which
+          // does NOT contain the literal "klasse"/"class" substring — so the generic
+          // includes() check below would drop every Mercedes result. Match on the
+          // class prefix followed by a space/dash/digit boundary so "c-klasse"
+          // accepts "C 300 T" but not "CLA 200", and "cla-klasse" accepts "CLA 200"
+          // but not "C 300 T".
+          const mbClass = reqModel.match(/^([a-z]{1,3})[\s-]?(?:klasse|class)$/i)
+          if (mbClass) {
+            const cls = mbClass[1].toLowerCase()
+            const carTrimmed = carModel.trim().toLowerCase()
+            // Commercial / non-class models that start with the same letter
+            // get pulled in by Bytbil free-text search. E-Klasse query brings
+            // back "E Vito Tourer" (bytbil reuses the E letter for an
+            // E-anything tag). Drop these explicitly.
+            const COMMERCIAL_LOOKALIKES = [
+              "vito", "v-class", "v klasse", "viano", "metris", "citan",
+              "sprinter", "vario", "marco polo", "eqv",
+            ]
+            if (COMMERCIAL_LOOKALIKES.some(k => carTrimmed.includes(k))) return false
+            if (new RegExp(`^${cls}(?:[\\s-]|\\d)`, "i").test(carTrimmed)) return true
+            return false
+          }
+
+          // Non-numeric models: "a6" matches "A6", "A6 Avant", "A6 Allroad".
+          // Word-token boundary via digit-guards: "m5" must not match "M50i",
+          // "a6" must not match "a60" (rare but possible AS24 ID strings).
+          // Preceding char: start-of-string OR non-digit. Trailing char: not a digit.
+          const reqNorm = reqModel.replace(/[^a-z0-9]/g, "")
+          const carNorm = carModel.replace(/[^a-z0-9]/g, "")
+          const tokenRe = new RegExp(`(?:^|[^0-9])${reqNorm}(?![0-9])`, "i")
+          if (tokenRe.test(carNorm)) return true
+
+          return false
+        })
+      })
+    }
+  }
+
+  // Year range — hard filter
+  if (prefs.year_from != null) {
+    filtered = filtered.filter(c => {
+      if (!c.year) return true
+      return c.year >= prefs.year_from!
+    })
+  }
+  if (prefs.year_to != null) {
+    filtered = filtered.filter(c => {
+      if (!c.year) return true
+      return c.year <= prefs.year_to!
+    })
+  }
+
+  // Fuel — hard filter, never show petrol when diesel requested
+  if (prefs.fuel) {
+    filtered = filtered.filter(c => {
+      const carFuel = (c.fuel ?? c.fuel_ua ?? "").toLowerCase()
+      if (!carFuel || carFuel === "unknown") return true
+      return carFuel.includes(prefs.fuel!.toLowerCase())
+    })
+  }
+
+  // Engine displacement
+  if (prefs.displacement_min != null || prefs.displacement_max != null) {
+    filtered = filtered.filter(c => {
+      const eng: string = (c.engine ?? "").toLowerCase()
+      // Extract displacement: "2.0 Diesel" → 2.0, "1.5L" → 1.5, "1998 ccm" → 2.0
+      let liters: number | null = null
+      const mDot = eng.match(/\b([1-9]\.\d+)\b/)
+      if (mDot) liters = parseFloat(mDot[1])
+      if (liters === null) {
+        const mCc = eng.match(/(\d{3,4})\s*(?:cc|ccm)/i)
+        if (mCc) liters = Math.round(parseInt(mCc[1]) / 100) / 10
+      }
+      if (liters === null) return true // keep if unknown
+      if (prefs.displacement_min != null && liters < prefs.displacement_min) return false
+      if (prefs.displacement_max != null && liters > prefs.displacement_max) return false
+      return true
+    })
+  }
+
+  // Mileage max
+  if (prefs.mileage_max) {
+    filtered = filtered.filter(c => {
+      const km = c.mileage ?? c.mileage_km
+      return !km || km <= prefs.mileage_max!
+    })
+  }
+
+  // Mileage min
+  if (prefs.mileage_min) {
+    filtered = filtered.filter(c => {
+      const km = c.mileage ?? c.mileage_km
+      return !km || km >= prefs.mileage_min!
+    })
+  }
+
+  // Color
+  if (prefs.color) {
+    filtered = filtered.filter(c => {
+      if (!c.color || c.color === "Unknown") return true // keep if unknown
+      return c.color.toLowerCase() === prefs.color!.toLowerCase()
+    })
+  }
+
+  // Drive (AWD/FWD/RWD) — keep unknowns only if most results lack drive data
+  if (prefs.drive) {
+    const carsWithDrive = filtered.filter(c => c.drive && c.drive !== "Unknown").length
+    const keepUnknown = carsWithDrive < filtered.length * 0.3 // if <30% have drive data, keep unknowns
+    filtered = filtered.filter(c => {
+      const carDrive = (c.drive ?? "").toUpperCase()
+      if (!carDrive || carDrive === "UNKNOWN") return keepUnknown
+      const wanted = prefs.drive!.toUpperCase()
+      if (wanted === "AWD") return ["AWD", "4WD", "4X4", "ALL"].some(k => carDrive.includes(k))
+      return carDrive.includes(wanted)
+    })
+  }
+
+  // Horsepower minimum (from purpose presets or chat)
+  if (prefs.hp_min != null) {
+    filtered = filtered.filter(c => {
+      const hp = c.horsepower ?? c.hp
+      if (!hp) return true // keep if unknown
+      return hp >= prefs.hp_min!
+    })
+  }
+
+  // Seats minimum (from purpose: "Для сім'ї з дітьми" → 5+)
+  if (prefs.seats_min != null) {
+    filtered = filtered.filter(c => {
+      if (!c.seats) return true // keep if unknown
+      return c.seats >= prefs.seats_min!
+    })
+  }
+
+  // Purpose body types (soft filter: if car has known body type, it must match one)
+  if (prefs.purpose_body_types.length > 0 && !prefs.body_type) {
+    const allowed = prefs.purpose_body_types.map(b => b.toLowerCase())
+    filtered = filtered.filter(c => {
+      const carBody = (c.body_type ?? c.bodyType ?? "").toLowerCase()
+      if (!carBody || carBody === "unknown" || carBody === "other") return true
+      return allowed.some(a => carBody.includes(a))
+    })
+  }
+
+  // Doors
+  if (prefs.doors != null) {
+    filtered = filtered.filter(c => {
+      if (!c.doors) return true // keep if unknown
+      return c.doors === prefs.doors
+    })
+  }
+
+  // Interior material
+  if (prefs.interior_material) {
+    const wanted = prefs.interior_material.toLowerCase()
+    filtered = filtered.filter(c => {
+      const mat = (c.seatMaterial ?? c.seat_material ?? c.interior_material ?? "").toLowerCase()
+      if (!mat) return true
+      return mat.includes(wanted)
+    })
+  }
+
+  // Required options
+  if (prefs.required_options.length > 0) {
+    filtered = filtered.filter(c => {
+      const allFeatures = [
+        ...(c.safety_features ?? []),
+        ...(c.comfort_features ?? []),
+        ...(c.infotainment ?? []),
+        ...(c.features_ua ?? []),
+      ].map((f: string) => f.toLowerCase())
+
+      return prefs.required_options.every(opt => {
+        const optLower = opt.toLowerCase()
+        return allFeatures.some(f => f.includes(optLower))
+      })
+    })
+  }
+
+  return filtered
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Build description of active filters
