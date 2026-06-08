@@ -1,9 +1,9 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import {
-  ArrowRight, ChevronLeft, Sparkles, Check, Send, RotateCcw,
+  ArrowRight, ChevronLeft, ChevronDown, Sparkles, Check, Send, RotateCcw,
   Car, Fuel, Settings2, Calendar, Zap, DollarSign, Search,
   SlidersHorizontal, Gauge, Palette, Armchair, DoorOpen, Users,
   Building2, Plane, Briefcase, Wrench, TrendingUp, MessageSquare,
@@ -1130,6 +1130,80 @@ function ResultCard({ car, onClick, allCars }: { car: CarType; onClick: () => vo
   )
 }
 
+// ─── PickerSortSelect — compact dropdown for picker results ──────────────────
+type PickerSortValue = "relevance" | "price-asc" | "price-desc" | "year-desc" | "year-asc"
+function PickerSortSelect({
+  value, onChange,
+}: {
+  value: PickerSortValue
+  onChange: (v: PickerSortValue) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const options: { value: PickerSortValue; label: string; hint: string }[] = [
+    { value: "relevance",  label: "За релевантністю", hint: "★" },
+    { value: "price-asc",  label: "Ціна: дешевші",     hint: "↑" },
+    { value: "price-desc", label: "Ціна: дорожчі",     hint: "↓" },
+    { value: "year-desc",  label: "Рік: новіші",       hint: "↓" },
+    { value: "year-asc",   label: "Рік: старіші",      hint: "↑" },
+  ]
+  const current = options.find(o => o.value === value) ?? options[0]
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [])
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition-all cursor-pointer ring-1 ${
+          open
+            ? "bg-white/[0.06] text-foreground ring-white/[0.12]"
+            : "text-muted-foreground/60 ring-transparent hover:text-foreground hover:bg-white/[0.04]"
+        }`}
+      >
+        <SlidersHorizontal className="h-3 w-3" />
+        <span>{current.label}</span>
+        <ChevronDown className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.97 }}
+            transition={{ duration: 0.15 }}
+            className="absolute right-0 top-full z-50 mt-1 min-w-[210px] rounded-xl border border-border bg-card shadow-2xl shadow-black/40 overflow-hidden"
+          >
+            <div className="p-1.5">
+              {options.map(opt => {
+                const active = opt.value === value
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => { onChange(opt.value); setOpen(false) }}
+                    className={`flex w-full items-center justify-between gap-4 rounded-lg px-3 py-2 text-xs transition-colors cursor-pointer ${
+                      active ? "bg-primary/[0.08] text-primary" : "text-foreground/70 hover:bg-white/[0.04] hover:text-foreground"
+                    }`}
+                  >
+                    <span>{opt.label}</span>
+                    <span className={`tabular-nums font-bold text-sm ${active ? "text-primary" : "text-muted-foreground/30"}`}>
+                      {opt.hint}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 // ─── ResultsScreen ────────────────────────────────────────────────────────────
 
 function ResultsScreen({
@@ -1146,10 +1220,65 @@ function ResultsScreen({
   const [allCars, setAllCars] = useState<CarType[]>(cars)
   const [loadingMore, setLoadingMore] = useState(false)
   const [chatPrefsRef, setChatPrefsRef] = useState<any>(null)
+  const [sortBy, setSortBy] = useState<"relevance" | "price-asc" | "price-desc" | "year-desc" | "year-asc">("relevance")
   useEffect(() => { setAllCars(cars) }, [cars])
   const handleNewCars = useCallback((newCars: CarType[]) => {
     setAllCars(newCars)
   }, [])
+
+  // Relevance score = 0.5 * below-market + 0.25 * mileage + 0.25 * year.
+  // Each component is normalized 0-1 within the current result set so the
+  // ranking adapts to whatever the user is looking at — a 60k-km car in a
+  // 30-150k spread scores 0.69, in a 50-80k spread it scores 0.67, etc.
+  const sortedCars = useMemo(() => {
+    const list = [...allCars]
+    if (sortBy === "price-asc") {
+      return list.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
+    }
+    if (sortBy === "price-desc") {
+      return list.sort((a, b) => (b.price ?? -Infinity) - (a.price ?? -Infinity))
+    }
+    if (sortBy === "year-desc") {
+      return list.sort((a, b) => (b.year ?? 0) - (a.year ?? 0))
+    }
+    if (sortBy === "year-asc") {
+      return list.sort((a, b) => (a.year ?? Infinity) - (b.year ?? Infinity))
+    }
+    // relevance
+    const mileages = list.map(c => c.mileage).filter((m): m is number => typeof m === "number" && m > 0)
+    const years = list.map(c => c.year).filter((y): y is number => typeof y === "number" && y > 0)
+    const maxMileage = mileages.length ? Math.max(...mileages) : 1
+    const minYear = years.length ? Math.min(...years) : 0
+    const maxYear = years.length ? Math.max(...years) : 1
+    const yearRange = Math.max(maxYear - minYear, 1)
+    const pricesByModel = new Map<string, number[]>()
+    for (const c of list) {
+      if (typeof c.price !== "number" || c.price <= 0) continue
+      const key = `${c.make ?? ""}|${c.model ?? ""}`
+      const arr = pricesByModel.get(key) ?? []
+      arr.push(c.price)
+      pricesByModel.set(key, arr)
+    }
+    const score = (c: CarType): number => {
+      const key = `${c.make ?? ""}|${c.model ?? ""}`
+      const peers = pricesByModel.get(key) ?? []
+      let priceScore = 0.5
+      if (typeof c.price === "number" && c.price > 0 && peers.length >= 3) {
+        const { percentile } = ratePriceVsMarket(c.price, peers)
+        priceScore = 1 - percentile / 100
+      }
+      let mileageScore = 0.5
+      if (typeof c.mileage === "number" && c.mileage > 0) {
+        mileageScore = 1 - c.mileage / maxMileage
+      }
+      let yearScore = 0.5
+      if (typeof c.year === "number" && c.year > 0) {
+        yearScore = (c.year - minYear) / yearRange
+      }
+      return 0.5 * priceScore + 0.25 * mileageScore + 0.25 * yearScore
+    }
+    return list.sort((a, b) => score(b) - score(a))
+  }, [allCars, sortBy])
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !chatPrefsRef) return
@@ -1223,10 +1352,7 @@ function ResultsScreen({
               : `${tp("found_n", language)}: ${allCars.filter(c => c.image).length} ${language === "uk" ? "авто" : "cars"}`}
         </span>
         {!loading && allCars.length > 0 && (
-          <span className="flex items-center gap-1 text-[11px] text-muted-foreground/40">
-            <SlidersHorizontal className="h-3 w-3" />
-            За релевантністю
-          </span>
+          <PickerSortSelect value={sortBy} onChange={setSortBy} />
         )}
         {loading && allCars.length > 0 && (
           <span className="flex items-center gap-1 text-[11px] text-primary/60">
@@ -1266,7 +1392,7 @@ function ResultsScreen({
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {allCars.filter(car => car.image).map((car, i) => (
+            {sortedCars.filter(car => car.image).map((car, i) => (
               <motion.div
                 key={car.id ?? `car-${i}`}
                 initial={{ opacity: 0, y: 8 }}
