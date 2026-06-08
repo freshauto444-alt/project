@@ -135,12 +135,16 @@ function normalizeBrand(raw: string): string {
 function stripGenerationSuffix(model: string | null | undefined): string | null {
   if (!model) return model ?? null
   const trimmed = model.trim()
-  const match = trimmed.match(/^(.*?)[\s-]+[bwfgce]\d{1,3}$/i)
-  if (!match) return trimmed
+  // Body-type suffix: "Cooper 3 Door" / "C3 5-Door" — AI sometimes tacks the
+  // body variant onto the model name. Parser then asks AS24 for /mini/3-door
+  // (404). Strip the suffix; downstream body_type filter still narrows.
+  const noBody = trimmed.replace(/[\s-]+[35][\s-]?door[s]?$/i, "").trim() || trimmed
+  const match = noBody.match(/^(.*?)[\s-]+[bwfgce]\d{1,3}$/i)
+  if (!match) return noBody
   const base = match[1].trim()
   // Performance prefixes — "amg e63", "m e63" etc. keep the full string.
-  if (/^(amg|m|rs|s|gt)$/i.test(base)) return trimmed
-  return base || trimmed
+  if (/^(amg|m|rs|s|gt)$/i.test(base)) return noBody
+  return base || noBody
 }
 
 function normalizeColor(text: string): string | null {
@@ -653,6 +657,11 @@ ${prevContext}
 - "пасат" → make: "Volkswagen", model: "Passat"
 - "октавія" / "октавия" → make: "Skoda", model: "Octavia"
 - "мазда 6" → make: "Mazda", model: "6"
+
+КУЗОВНІ ВАРІАНТИ (3 Door, 5 Door, Estate, Avant) — НЕ пиши їх у model, це body_type:
+- "MINI Cooper 3 Door" → make: "MINI", model: "Cooper"
+- "Audi A4 Avant" → make: "Audi", model: "A4"
+- "BMW 3 Series Touring" → make: "BMW", model: "3 Series"
 
 ПЕРФОРМАНС-ВАРІАНТИ (AMG / M / RS / S / GT) — ЗБЕРІГАЙ trim-цифри, не нормалізуй до базового класу:
 - "мерс е63" / "e63" / "amg e63" → make: "Mercedes-Benz", model: "E 63"

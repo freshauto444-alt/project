@@ -373,6 +373,12 @@ whyRecommended (РІВНО 2 короткі речення, ~25 слів кож�
 concerns (1 коротке речення, мʼяко): загальний нюанс класу. Без сум ремонтів, без кодів моторів, без слів "проблема/ремонт/ризик".
 model_search = назва моделі lowercase, БЕЗ префіксу марки, БЕЗ маркера покоління (B8, B9, F30, G20, W213, E46, C8 тощо — це КОДИ платформ, а не модель). Приклади: "Audi A7" → "a7"; "BMW 3 Series Touring" → "3er"; "Mercedes C-Class" → "c-klasse"; "Volvo V60" → "v60"; "VW Passat B9" → "passat"; "BMW X5 G05" → "x5". Підбирай ВИКЛЮЧНО код базової моделі — покоління визначається через yearRange.
 
+КУЗОВНІ ВАРІАНТИ (3 Door, 5 Door, Estate, Touring, Avant, Sportback, Coupé, Convertible). НЕ пиши їх у model_search — це body_type, не модель:
+• "MINI Cooper 3 Door" → model_search="cooper" (body_type обирається окремо як Hatchback)
+• "MINI Cooper 5 Door" → model_search="cooper"
+• "Audi A4 Avant" → model_search="a4"
+• "BMW 3 Series Touring" → model_search="3er" (виняток: AS24 розрізняє Touring окремою категорією, проте slug "3er" повертає й Touring — фільтр body_type=Estate далі звузить)
+
 ВИНЯТОК — ПЕРФОРМАНС-ВАРІАНТИ (AMG / M / RS / S-line / GT). Тут цифра після літери — це trim, не покоління. Зберігай повну назву:
 • "Mercedes E63 AMG" → model_search="e 63" (НЕ "e-klasse" — клієнт хоче конкретно AMG-версію)
 • "Mercedes C63 AMG" → model_search="c 63"
