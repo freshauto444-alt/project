@@ -2,9 +2,11 @@ import type { Metadata } from "next"
 import { getFeaturedOrderCars } from "@/lib/cars"
 import OrderCatalogClient from "@/components/order-catalog-client"
 
-// Short revalidate (1 min) so newly parsed cars surface within a minute of
-// being upserted by the cron worker. ISR cache is per-path on Vercel.
-export const revalidate = 60
+// 4-hour ISR cache — fresh parser batches drop every 4-6h, so this gives
+// users a stable selection within each refresh window while still rotating
+// to newer stock at each batch. Less DB churn than the previous 60s
+// revalidate, no perceptible loss of freshness.
+export const revalidate = 14400
 
 export const metadata: Metadata = {
   title: "Авто під замовлення — Fresh Auto",

@@ -2,6 +2,36 @@
 import { createClient } from "@/lib/supabase/server"
 import { mapDbCar, cars as seedCars, type Car } from "@/lib/data"
 
+/**
+ * Round-robin cars by `make` so a single brand can't monopolise a page.
+ * Preserves the relative order within each brand (DB-sorted by created_at
+ * → newest of each brand wins the head spot), then weaves: first car of
+ * each brand, second of each, and so on. Stable for tie-broken pagination.
+ */
+function interleaveByMake<T extends { make: string }>(cars: T[]): T[] {
+  if (cars.length <= 1) return cars
+  const groups = new Map<string, T[]>()
+  for (const c of cars) {
+    const key = (c.make || "Unknown").toLowerCase()
+    let g = groups.get(key)
+    if (!g) { g = []; groups.set(key, g) }
+    g.push(c)
+  }
+  const queues = [...groups.values()]
+  const out: T[] = []
+  let any = true
+  while (any) {
+    any = false
+    for (const q of queues) {
+      if (q.length) {
+        out.push(q.shift()!)
+        any = true
+      }
+    }
+  }
+  return out
+}
+
 // Fast-fail wrapper — Supabase SDK's default fetch has no timeout, so a
 // DNS-failed project (or unreachable DB) hangs server-side rendering for 15-30s.
 // Cap at 3s: if DB is unreachable, page renders empty state immediately.
@@ -169,7 +199,12 @@ export async function getFeaturedOrderCars(
           q = q.or(`make.ilike.%${safe}%,model.ilike.%${safe}%`)
         }
 
+        // Sort newest-first so the listing keeps rotating as fresh parser
+        // batches arrive every few hours. created_at == when our DB first saw
+        // the car, which is the closest proxy we have for "just listed".
+        // Tiebreaker by price keeps pagination deterministic.
         const { data, error, count } = await q
+          .order("created_at", { ascending: false, nullsFirst: false })
           .order("price", { ascending: true, nullsFirst: false })
           .range(offset, offset + limit - 1)
 
@@ -179,7 +214,12 @@ export async function getFeaturedOrderCars(
           return { cars: [] as Car[], total: 0 }
         }
 
-        const cars = (data ?? []).map(mapDbCar).filter(c => c.image)
+        const rawCars = (data ?? []).map(mapDbCar).filter(c => c.image)
+        // Brand round-robin within the page so the user doesn't scroll past
+        // 15 BMWs in a row when one batch dropped a lot of the same make.
+        // Operates only on the current page's `limit` rows — keeps DB
+        // pagination stable, only re-shuffles what's about to render.
+        const cars = interleaveByMake(rawCars)
         console.log(`[cars] getFeaturedOrderCars(offset=${offset}, limit=${limit}): ${cars.length} returned (count: ${count ?? "?"})`)
         return {
           cars,
