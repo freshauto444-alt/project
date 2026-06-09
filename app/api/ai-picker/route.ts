@@ -1229,18 +1229,19 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
     }
   }
 
-  // Year range — hard filter
+  // Year range — hard filter.
+  // When the client asks for 2018+ (modern car), REJECT cars with missing
+  // year. Otherwise Blocket's bare-bones listings (no regdate scraped on
+  // many ancient Honda Accord/Toyota Avensis ads from 2003-2010) leak in
+  // as if they matched a "Honda Accord 2019-2022" query. For older searches
+  // (year_from < 2018) we still keep unknowns since that's the bulk of the
+  // pre-2015 Swedish stock and dropping them empties the result.
   if (prefs.year_from != null) {
-    filtered = filtered.filter(c => {
-      if (!c.year) return true
-      return c.year >= prefs.year_from!
-    })
+    const strictUnknown = prefs.year_from >= 2018
+    filtered = filtered.filter(c => c.year ? c.year >= prefs.year_from! : !strictUnknown)
   }
   if (prefs.year_to != null) {
-    filtered = filtered.filter(c => {
-      if (!c.year) return true
-      return c.year <= prefs.year_to!
-    })
+    filtered = filtered.filter(c => !c.year || c.year <= prefs.year_to!)
   }
 
   // Fuel — hard filter, never show petrol when diesel requested
