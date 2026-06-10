@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect, memo } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import {
-  X, Gauge, Fuel, Settings2, Calendar, Palette, Zap, RotateCcw,
+  X, Gauge, Fuel, Settings2, Calendar, Palette, Zap, RotateCcw, Cog,
   CheckCircle2, Heart, Share2, Move, Shield, ArrowRight, RefreshCw,
   ChevronLeft, ChevronRight, Maximize2, Minimize2, MapPin, DoorOpen,
   Armchair, Car, Lock, Wifi, Eye, Phone, MessageCircle, FileText,
@@ -566,6 +566,7 @@ export default function CarDetailsModal({ car, onClose, onCheckout }: CarDetails
     { icon: Calendar, label: "Рік", value: car.year?.toString() },
     { icon: Gauge, label: "Пробіг", value: car.mileage != null ? formatMileage(car.mileage) : null },
     { icon: Fuel, label: "Паливо", value: car.fuelUa },
+    { icon: Cog, label: "Двигун", value: car.engine },
     { icon: Settings2, label: "КПП", value: car.transmission },
     { icon: Zap, label: "Потужність", value: car.horsepower != null ? `${car.horsepower} hp` : null },
     { icon: Palette, label: "Колір", value: car.colorUa },

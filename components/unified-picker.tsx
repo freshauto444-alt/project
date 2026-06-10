@@ -1178,6 +1178,7 @@ function ResultCard({ car, onClick, allCars }: { car: CarType; onClick: () => vo
             </span>
           )}
           {(car.fuelUa || car.fuel) && <span>{car.fuelUa || car.fuel}</span>}
+          {car.engine && <span>{car.engine}</span>}
           {car.transmission && <span>{car.transmission}</span>}
         </div>
 
