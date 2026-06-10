@@ -440,6 +440,38 @@ interface RetrySuggestion {
   prefs: Partial<ChatPreferences>       // diff to merge into current preferences
 }
 
+// Given the raw (pre-filter) cars and the active prefs, return UA labels of the
+// secondary filters that are individually responsible for emptying the result —
+// i.e. removing just that one filter would bring cars back. Used to tell the
+// user the HONEST reason ("привід AWD"), not a hardcoded guess. Note: most of
+// these constraints come from the chosen AI suggestion (GLS 400d ⇒ AWD/Diesel),
+// not from anything the user typed — the message wording reflects that.
+interface BlockingFilter { label: string; retry: Partial<ChatPreferences> }
+function diagnoseBlockingFilters(rawCars: any[], prefs: ChatPreferences): BlockingFilter[] {
+  if (rawCars.length === 0) return []
+  const survives = (override: Partial<ChatPreferences>) =>
+    filterCars(rawCars, { ...prefs, ...override }).length > 0
+  const blockers: BlockingFilter[] = []
+  const check = (active: boolean, override: Partial<ChatPreferences>, label: string) => {
+    if (active && survives(override)) blockers.push({ label, retry: override })
+  }
+  check(!!prefs.drive, { drive: null }, "привід")
+  check(!!prefs.fuel, { fuel: null }, "паливо")
+  check(!!prefs.body_type, { body_type: null }, "тип кузова")
+  check(!!prefs.color, { color: null }, "колір")
+  check(prefs.displacement_min != null || prefs.displacement_max != null,
+    { displacement_min: null, displacement_max: null }, "обʼєм двигуна")
+  check(prefs.mileage_min != null || prefs.mileage_max != null,
+    { mileage_min: null, mileage_max: null }, "пробіг")
+  check(prefs.hp_min != null, { hp_min: null }, "потужність")
+  check(prefs.seats_min != null, { seats_min: null }, "кількість місць")
+  check(prefs.doors != null, { doors: null }, "кількість дверей")
+  check(!!prefs.interior_material, { interior_material: null }, "матеріал салону")
+  check(prefs.year_from != null || prefs.year_to != null,
+    { year_from: null, year_to: null }, "рік випуску")
+  return blockers
+}
+
 function buildRetrySuggestion(prefs: ChatPreferences | null): RetrySuggestion | null {
   if (!prefs) return null
   // Pick the single tightest constraint to loosen (most likely to unlock results).
@@ -1106,6 +1138,9 @@ async function triggerParser(
   // filtering — lets the handler distinguish "parser found nothing" from
   // "parser found cars but the user's filters removed them all" (better msg).
   let rawParserHits = 0
+  // Sample of raw (pre-filter) cars, kept so we can diagnose WHICH filter
+  // removed everything when the result is filtered-empty (capped to stay cheap).
+  const rawCarsSample: any[] = []
 
   const searchWithFallback = async (p: CarPair) => {
     // Normalize trailing generation suffixes (e.g. "passat b9" → "passat").
@@ -1122,6 +1157,7 @@ async function triggerParser(
       const r = await callParserInstant(payload)
       if (!r || r.count === 0) return null
       rawParserHits += r.count
+      if (rawCarsSample.length < 200) rawCarsSample.push(...r.cars)
       const kept = filterCars(r.cars, pairPrefs)
       return kept.length > 0 ? { count: kept.length, cars: kept } : null
     }
@@ -1187,11 +1223,12 @@ async function triggerParser(
   const withoutImg = allCars.filter(c => !c.image)
   allCars = [...withImg, ...withoutImg]
 
-  // filteredEmpty = parser DID return cars, but the user's client-side filters
-  // (engine/mileage/hp/…) removed every one. Lets the handler show a precise
-  // "loosen your filters" message instead of a generic "nothing found".
+  // filteredEmpty = parser DID return cars, but the client-side filters removed
+  // every one. blockers = the specific filters responsible, so the handler can
+  // name them honestly instead of guessing.
   const filteredEmpty = allCars.length === 0 && rawParserHits > 0
-  return { count: allCars.length, cars: allCars, filteredEmpty }
+  const blockers = filteredEmpty ? diagnoseBlockingFilters(rawCarsSample, filterPrefs) : []
+  return { count: allCars.length, cars: allCars, filteredEmpty, blockers }
 }
 
 
@@ -1327,13 +1364,27 @@ export async function POST(req: Request) {
       // Logging must never break the request.
     }
 
-    // P11: distinguish "parser found nothing" from "parser found cars but the
-    // user's extra filters (engine/mileage/hp/seats/…) removed them all" — the
-    // latter gets an actionable "loosen your filters" message.
-    const message = (count === 0 && result?.filteredEmpty)
-      ? "Знайшов авто за маркою та ціною, але ваші додаткові фільтри (обʼєм двигуна, пробіг, потужність, місця) відсіяли всі варіанти. Спробуйте послабити їх."
-      : await generateSearchComment(foundCars, count, chat, tags)
-    const retrySuggestion = count === 0 ? buildRetrySuggestion(chat) : null
+    // P11: distinguish "parser found nothing" from "parser found cars but a
+    // filter removed them all". In the latter case name the ACTUAL blocking
+    // filter(s) — these usually come from the chosen suggestion (e.g. GLS 400d ⇒
+    // повний привід), not from anything the user typed, so say so honestly.
+    const blockers = result?.blockers ?? []
+    let message: string
+    if (count === 0 && result?.filteredEmpty && blockers.length > 0) {
+      const list = blockers.map(b => b.label).join(", ")
+      message = `Авто цієї марки в бюджеті є, але жодне не проходить за параметром${blockers.length > 1 ? "ами" : ""}: ${list}. Ці параметри підтягнулись з обраної пропозиції — прибрати їх і показати варіанти?`
+    } else if (count === 0 && result?.filteredEmpty) {
+      message = "Авто за маркою та ціною є, але всі відсіялись за додатковими параметрами підбору. Спробуймо їх послабити?"
+    } else {
+      message = await generateSearchComment(foundCars, count, chat, tags)
+    }
+    // Retry button targets the ACTUAL blocking filter when we found one;
+    // otherwise falls back to the heuristic single-constraint relaxer.
+    const retrySuggestion = count === 0
+      ? (blockers.length > 0
+          ? { label: `Прибрати: ${blockers[0].label}`, prefs: blockers[0].retry }
+          : buildRetrySuggestion(chat))
+      : null
 
     return NextResponse.json({
       message,
