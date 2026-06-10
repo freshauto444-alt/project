@@ -469,6 +469,12 @@ function diagnoseBlockingFilters(rawCars: any[], prefs: ChatPreferences): Blocki
   check(!!prefs.interior_material, { interior_material: null }, "матеріал салону")
   check(prefs.year_from != null || prefs.year_to != null,
     { year_from: null, year_to: null }, "рік випуску")
+  // Model-name matching: if dropping the model (keeping the brand) brings cars
+  // back, the parser returned the brand but our model matcher rejected the trims.
+  if (prefs.pairs.some(p => p.model) &&
+      survives({ pairs: prefs.pairs.map(p => ({ make: p.make, model: null })) })) {
+    blockers.push({ label: "назва моделі", retry: { pairs: prefs.pairs.map(p => ({ make: p.make, model: null })) } })
+  }
   return blockers
 }
 

@@ -86,7 +86,14 @@ export function filterCars(cars: any[], prefs: FilterPrefs): any[] {
 
           const reqNorm = reqModel.replace(/[^a-z0-9]/g, "")
           const carNorm = carModel.replace(/[^a-z0-9]/g, "")
-          const tokenRe = new RegExp(`(?:^|[^0-9])${reqNorm}(?![0-9])`, "i")
+          // If the requested model is purely alphabetic (Mercedes GLE/GLS/GLC/GLA/
+          // EQE/CLA/CLS, AMG "GT"…), a trailing digit is the TRIM — "GLE" MUST match
+          // "GLE 300 d". Only guard against a trailing digit when the model itself
+          // ends in a digit (a6 must not match a60, x5 not x50, 320 not 3200).
+          const endsWithDigit = /[0-9]$/.test(reqNorm)
+          const tokenRe = endsWithDigit
+            ? new RegExp(`(?:^|[^0-9])${reqNorm}(?![0-9])`, "i")
+            : new RegExp(`(?:^|[^a-z0-9])${reqNorm}`, "i")
           if (tokenRe.test(carNorm)) return true
 
           return false
