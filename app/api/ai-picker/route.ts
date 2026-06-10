@@ -798,13 +798,26 @@ ${prevContext}${journeyContext}
       "Rolls-Royce", "Infiniti", "Acura", "Smart", "Abarth", "Alpine",
       "DS Automobiles",
     ])
+    const prevPairsForInherit = previous?.pairs ?? []
     const pairs: CarPair[] = Array.isArray(parsed.pairs)
       ? parsed.pairs
           .filter((p: any) => p.make || p.model)
-          .map((p: any) => ({
-            make: p.make ? normalizeBrand(p.make) : null,
-            model: p.model ?? null,
-          }))
+          .map((p: any) => {
+            const make = p.make ? normalizeBrand(p.make) : null
+            let model = p.model ?? null
+            // A make-only pair inherits the model from a matching previous pair.
+            // Without this, refining a pick via chat/free-text (which rarely
+            // restates the model) silently broadens e.g. "Mercedes E-Klasse" to
+            // "all Mercedes" — the user then gets CLA/GLA/Vito back. The model is
+            // only dropped when the user EXPLICITLY clears it (handled elsewhere).
+            if (make && !model) {
+              const prevMatch = prevPairsForInherit.find(
+                pp => pp.make?.toLowerCase() === make.toLowerCase() && pp.model,
+              )
+              if (prevMatch) model = prevMatch.model
+            }
+            return { make, model }
+          })
           .filter((p: CarPair) => !p.make || _KNOWN.has(p.make))  // reject hallucinated brands
       : previous?.pairs ?? []
 

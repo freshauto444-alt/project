@@ -2652,12 +2652,11 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
-          // P2: forward the free-text prompt so constraints the form can't express
-          // (e.g. "з панорамним дахом", a specific colour) are honoured on approve
-          // too — not just on /suggest and "search all". The explicit suggestion
-          // pair below stays first, so this only ADDS constraints, never replaces
-          // the picked make/model.
-          messages: freeText?.trim() ? [{ role: "user", content: freeText.trim() }] : [],
+          // Approve = "search exactly this suggestion". Keep messages empty so the
+          // backend uses the explicit pair below as-is and never re-extracts pairs
+          // from free text (which dropped the model, broadening e.g. "E-Klasse" to
+          // all Mercedes). Free-text constraints are applied at the /suggest stage.
+          messages: [],
           answers,
           triggerSearch: true,
           clientOrderId: makeUuid(),
