@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { filterCars, carKey } from "@/lib/car-filter"
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Types
@@ -705,6 +706,13 @@ ${prevContext}${journeyContext}
 - "від 300 коней" / "потужний" → hp_min: 300
 - "від 200 к.с." → hp_min: 200
 
+МІСЦЯ / ДВЕРІ / САЛОН:
+- "7 місць" / "семимісний" / "для великої сім'ї" → seats_min: 7
+- "5 місць" → seats_min: 5
+- "3 двері" / "тридверний" → doors: 3; "5 дверей" → doors: 5
+- "шкіряний салон" / "шкіра" → interior_material: "Leather"
+- "тканина" → interior_material: "Fabric"; "алькантара" → interior_material: "Alcantara"
+
 Поверни JSON (ОБОВ'ЯЗКОВО усі поля, null якщо не задано):
 {
   "pairs": [{"make": "...", "model": "..."}],
@@ -717,6 +725,9 @@ ${prevContext}${journeyContext}
   "mileage_max": число км або null,
   "mileage_min": число км або null,
   "hp_min": число (к.с.) або null,
+  "seats_min": число місць або null,
+  "doors": число дверей або null,
+  "interior_material": "Leather"|"Fabric"|"Alcantara"|"Velour"|"Eco-leather" або null,
   "required_options": ["leather","panorama","carplay","navigation","camera","heated seats"] або [],
   "year_from": число або null,
   "year_to": число або null,
@@ -822,9 +833,17 @@ ${prevContext}${journeyContext}
       hp_min: "hp_min" in parsed
         ? (typeof parsed.hp_min === "number" ? parsed.hp_min : null)
         : prev.hp_min,
-      seats_min: prev.seats_min,  // only from purpose presets, not from chat
-      doors: prev.doors,  // only from form, not from chat
-      interior_material: prev.interior_material,  // only from form, not from chat
+      // P13: these are now extractable from chat too (e.g. "потрібно 7 місць",
+      // "шкіряний салон"). Fall back to the form/purpose value when not mentioned.
+      seats_min: "seats_min" in parsed
+        ? (typeof parsed.seats_min === "number" ? parsed.seats_min : null)
+        : prev.seats_min,
+      doors: "doors" in parsed
+        ? (typeof parsed.doors === "number" ? parsed.doors : null)
+        : prev.doors,
+      interior_material: "interior_material" in parsed
+        ? (typeof parsed.interior_material === "string" ? parsed.interior_material : null)
+        : prev.interior_material,
       purpose_body_types: prev.purpose_body_types,  // only from purpose presets
     }
   } catch (e: any) {
@@ -1058,27 +1077,69 @@ async function triggerParser(
   // where AI's yearRange ends up too tight for the actual stock. Without it
   // the user sees "0 results" even though cars exist in adjacent years.
   const hasYearWindow = commonPayload.year_from != null || commonPayload.year_to != null
+
+  // Client-side filter set (params the parser endpoint can't filter on:
+  // displacement/mileage/hp/seats/doors/color/interior). Built BEFORE the
+  // cascade so each fallback step can check the FILTERED survivor count, not
+  // the raw parser count. Previously a step that returned 100 cars — all of
+  // which the engine/mileage filter then removed — was treated as "success",
+  // so the cascade never relaxed price/year and the user got a misleading
+  // "0 found". Now an all-filtered-out step escalates to the next one.
+  const filterPrefs: ChatPreferences = {
+    ...chat,
+    displacement_min: chat.displacement_min ?? base.displacement_min ?? null,
+    displacement_max: chat.displacement_max ?? base.displacement_max ?? null,
+    hp_min: chat.hp_min ?? base.hp_min ?? null,
+    seats_min: chat.seats_min ?? base.seats_min ?? null,
+    drive: chat.drive ?? base.drive ?? null,
+    mileage_min: chat.mileage_min ?? base.mileage_min ?? null,
+    mileage_max: chat.mileage_max ?? base.mileage_max ?? null,
+    color: chat.color ?? base.color ?? null,
+    doors: chat.doors ?? base.doors ?? null,
+    interior_material: chat.interior_material ?? base.interior_material ?? null,
+    purpose_body_types: chat.purpose_body_types.length > 0
+      ? chat.purpose_body_types
+      : base.purpose_body_types ?? [],
+  }
+
+  // Count of cars the parser returned across all steps/pairs BEFORE client
+  // filtering — lets the handler distinguish "parser found nothing" from
+  // "parser found cars but the user's filters removed them all" (better msg).
+  let rawParserHits = 0
+
   const searchWithFallback = async (p: CarPair) => {
     // Normalize trailing generation suffixes (e.g. "passat b9" → "passat").
     // AS24's slug map only has base model names; "passat-b9" resolves to a
     // non-existent URL and the whole 3-step cascade returns 0 even though
     // /volkswagen/passat has plenty of stock.
     const model = stripGenerationSuffix(p.model)
+    // Filter this pair's cars against the pair itself (not all pairs).
+    const pairPrefs: ChatPreferences = { ...filterPrefs, pairs: p.make ? [p] : [] }
+
+    // Run one parser step, then keep only cars that survive client-side filters.
+    // Returns null when the step yields no USABLE (post-filter) cars.
+    const tryStep = async (payload: Record<string, unknown>) => {
+      const r = await callParserInstant(payload)
+      if (!r || r.count === 0) return null
+      rawParserHits += r.count
+      const kept = filterCars(r.cars, pairPrefs)
+      return kept.length > 0 ? { count: kept.length, cars: kept } : null
+    }
 
     // Step 1: AI/user criteria as-is
-    const first = await callParserInstant({ ...commonPayload, make: p.make, model })
-    if (first && first.count > 0) return first
+    const first = await tryStep({ ...commonPayload, make: p.make, model })
+    if (first) return first
 
     // Step 2: drop lower price bound only. Keep year_from/year_to/budget_max.
     // budget_min=0 (not null) — parser defaults to 5000 EUR when omitted.
-    const second = await callParserInstant({ ...commonPayload, budget_min: 0, make: p.make, model })
-    if (second && second.count > 0) return second
+    const second = await tryStep({ ...commonPayload, budget_min: 0, make: p.make, model })
+    if (second) return second
 
     // Step 3: drop year window too — only triggers if step 1/2 used a year
     // filter. Skip when no year was set in the first place (otherwise it's a
     // duplicate of step 2).
     if (hasYearWindow) {
-      const third = await callParserInstant({
+      const third = await tryStep({
         ...commonPayload,
         budget_min: 0,
         year_from: null,
@@ -1086,7 +1147,7 @@ async function triggerParser(
         make: p.make,
         model,
       })
-      if (third && third.count > 0) return third
+      if (third) return third
     }
 
     // All empty → return empty. Frontend shows the red "0 found" message.
@@ -1109,32 +1170,15 @@ async function triggerParser(
   for (const r of [...results].reverse()) {
     if (!r) continue
     for (const car of r.cars ?? []) {
-      const key = (car.url ?? car.source_url ?? car.id) as string
+      const key = carKey(car)
       if (key && seenUrls.has(key)) continue
       if (key) seenUrls.add(key)
       allCars.push(car)
     }
   }
 
-  // ── Client-side filtering (params that parser doesn't support) ──────────
-  // Merge survey-form values (from extractSearchParams) with chat-extracted prefs
-  const filterPrefs: ChatPreferences = {
-    ...chat,
-    displacement_min: chat.displacement_min ?? base.displacement_min ?? null,
-    displacement_max: chat.displacement_max ?? base.displacement_max ?? null,
-    hp_min: chat.hp_min ?? base.hp_min ?? null,
-    seats_min: chat.seats_min ?? base.seats_min ?? null,
-    drive: chat.drive ?? base.drive ?? null,
-    mileage_min: chat.mileage_min ?? base.mileage_min ?? null,
-    mileage_max: chat.mileage_max ?? base.mileage_max ?? null,
-    color: chat.color ?? base.color ?? null,
-    doors: chat.doors ?? base.doors ?? null,
-    interior_material: chat.interior_material ?? base.interior_material ?? null,
-    purpose_body_types: chat.purpose_body_types.length > 0
-      ? chat.purpose_body_types
-      : base.purpose_body_types ?? [],
-  }
-  allCars = filterCarsClientSide(allCars, filterPrefs)
+  // NOTE: cars are already client-side filtered per pair inside searchWithFallback,
+  // so no second filtering pass is needed here.
 
   // SOFT image preference: prefer cars with images at the TOP, but never drop
   // cars entirely — otherwise a partially-indexed DB returns "no cars found"
@@ -1143,237 +1187,13 @@ async function triggerParser(
   const withoutImg = allCars.filter(c => !c.image)
   allCars = [...withImg, ...withoutImg]
 
-  return { count: allCars.length, cars: allCars }
+  // filteredEmpty = parser DID return cars, but the user's client-side filters
+  // (engine/mileage/hp/…) removed every one. Lets the handler show a precise
+  // "loosen your filters" message instead of a generic "nothing found".
+  const filteredEmpty = allCars.length === 0 && rawParserHits > 0
+  return { count: allCars.length, cars: allCars, filteredEmpty }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Client-side filtering — mileage, color, options
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
-  let filtered = [...cars]
-
-  // Model filter — SOFT: parser already filtered by make/model in URL.
-  // Make + Model filter — smart series matching
-  // BMW "4er" → accepts "420", "430", "M4" but NOT "318", "X5"
-  // Audi "a6" → accepts "A6", "A6 Avant" but NOT "A4", "Q5"
-  if (prefs.pairs.length > 0) {
-    const pairsLower = prefs.pairs
-      .filter(p => p.make)
-      .map(p => ({ make: p.make!.toLowerCase(), model: (p.model ?? "").toLowerCase() }))
-
-    if (pairsLower.length > 0) {
-      filtered = filtered.filter(c => {
-        const carMake = (c.make ?? "").toLowerCase()
-        const carModel = (c.model ?? "").toLowerCase()
-        if (!carMake) return true
-
-        return pairsLower.some(({ make: reqMake, model: reqModel }) => {
-          // Make must match
-          if (!carMake.includes(reqMake) && !reqMake.includes(carMake)) return false
-          // If no specific model requested, accept all from this make
-          if (!reqModel) return true
-
-          // Extract series number: "3er" → "3", "4 series" → "4", "a6" → "a6"
-          const seriesMatch = reqModel.match(/^(\d+)/)
-          if (seriesMatch) {
-            const series = seriesMatch[1]
-            // BMW series: "4" matches "420", "430", "440", "M4", "Serie 4", "4er Reihe"
-            // but NOT "X4", "318", "520". Guard against X-class (suv) with negative lookbehind.
-            if (carModel.startsWith(series)) return true
-            // M3 must match "M3 Competition" but NOT "M340i" / "M3 GTS"
-            // Negative lookahead forbids trailing digit after the M-letter form.
-            if (new RegExp(`m${series}(?![0-9])`, "i").test(carModel)) return true
-            // Match "series N" / "serie N" / "Nreihe" / "Ner" anywhere
-            const seriesRe = new RegExp(`(?:^|\\s|^serie\\s*|^series\\s*)${series}(?:er|e|\\s|$)`, "i")
-            if (seriesRe.test(carModel)) return true
-            return false
-          }
-
-          // Mercedes class slug ("c-klasse", "e-klasse", "gla-klasse", "cla-class"…).
-          // Parser hits AS24/Bytbil with the class slug but returned cars come back
-          // with the concrete designation ("C 300 T", "GLA 200", "CLA 180"), which
-          // does NOT contain the literal "klasse"/"class" substring — so the generic
-          // includes() check below would drop every Mercedes result. Match on the
-          // class prefix followed by a space/dash/digit boundary so "c-klasse"
-          // accepts "C 300 T" but not "CLA 200", and "cla-klasse" accepts "CLA 200"
-          // but not "C 300 T".
-          const mbClass = reqModel.match(/^([a-z]{1,3})[\s-]?(?:klasse|class)$/i)
-          if (mbClass) {
-            const cls = mbClass[1].toLowerCase()
-            const carTrimmed = carModel.trim().toLowerCase()
-            // Commercial / non-class models that start with the same letter
-            // get pulled in by Bytbil free-text search. E-Klasse query brings
-            // back "E Vito Tourer" (bytbil reuses the E letter for an
-            // E-anything tag). Drop these explicitly.
-            const COMMERCIAL_LOOKALIKES = [
-              "vito", "v-class", "v klasse", "viano", "metris", "citan",
-              "sprinter", "vario", "marco polo", "eqv",
-            ]
-            if (COMMERCIAL_LOOKALIKES.some(k => carTrimmed.includes(k))) return false
-            if (new RegExp(`^${cls}(?:[\\s-]|\\d)`, "i").test(carTrimmed)) return true
-            return false
-          }
-
-          // Non-numeric models: "a6" matches "A6", "A6 Avant", "A6 Allroad".
-          // Word-token boundary via digit-guards: "m5" must not match "M50i",
-          // "a6" must not match "a60" (rare but possible AS24 ID strings).
-          // Preceding char: start-of-string OR non-digit. Trailing char: not a digit.
-          const reqNorm = reqModel.replace(/[^a-z0-9]/g, "")
-          const carNorm = carModel.replace(/[^a-z0-9]/g, "")
-          const tokenRe = new RegExp(`(?:^|[^0-9])${reqNorm}(?![0-9])`, "i")
-          if (tokenRe.test(carNorm)) return true
-
-          return false
-        })
-      })
-    }
-  }
-
-  // Year range — hard filter.
-  // When the client asks for 2018+ (modern car), REJECT cars with missing
-  // year. Otherwise Blocket's bare-bones listings (no regdate scraped on
-  // many ancient Honda Accord/Toyota Avensis ads from 2003-2010) leak in
-  // as if they matched a "Honda Accord 2019-2022" query. For older searches
-  // (year_from < 2018) we still keep unknowns since that's the bulk of the
-  // pre-2015 Swedish stock and dropping them empties the result.
-  if (prefs.year_from != null) {
-    const strictUnknown = prefs.year_from >= 2018
-    filtered = filtered.filter(c => c.year ? c.year >= prefs.year_from! : !strictUnknown)
-  }
-  if (prefs.year_to != null) {
-    filtered = filtered.filter(c => !c.year || c.year <= prefs.year_to!)
-  }
-
-  // Fuel — hard filter, never show petrol when diesel requested
-  if (prefs.fuel) {
-    filtered = filtered.filter(c => {
-      const carFuel = (c.fuel ?? c.fuel_ua ?? "").toLowerCase()
-      if (!carFuel || carFuel === "unknown") return true
-      return carFuel.includes(prefs.fuel!.toLowerCase())
-    })
-  }
-
-  // Engine displacement
-  if (prefs.displacement_min != null || prefs.displacement_max != null) {
-    filtered = filtered.filter(c => {
-      const eng: string = (c.engine ?? "").toLowerCase()
-      // Extract displacement: "2.0 Diesel" → 2.0, "1.5L" → 1.5, "1998 ccm" → 2.0
-      let liters: number | null = null
-      const mDot = eng.match(/\b([1-9]\.\d+)\b/)
-      if (mDot) liters = parseFloat(mDot[1])
-      if (liters === null) {
-        const mCc = eng.match(/(\d{3,4})\s*(?:cc|ccm)/i)
-        if (mCc) liters = Math.round(parseInt(mCc[1]) / 100) / 10
-      }
-      if (liters === null) return true // keep if unknown
-      if (prefs.displacement_min != null && liters < prefs.displacement_min) return false
-      if (prefs.displacement_max != null && liters > prefs.displacement_max) return false
-      return true
-    })
-  }
-
-  // Mileage max
-  if (prefs.mileage_max) {
-    filtered = filtered.filter(c => {
-      const km = c.mileage ?? c.mileage_km
-      return !km || km <= prefs.mileage_max!
-    })
-  }
-
-  // Mileage min
-  if (prefs.mileage_min) {
-    filtered = filtered.filter(c => {
-      const km = c.mileage ?? c.mileage_km
-      return !km || km >= prefs.mileage_min!
-    })
-  }
-
-  // Color
-  if (prefs.color) {
-    filtered = filtered.filter(c => {
-      if (!c.color || c.color === "Unknown") return true // keep if unknown
-      return c.color.toLowerCase() === prefs.color!.toLowerCase()
-    })
-  }
-
-  // Drive (AWD/FWD/RWD) — keep unknowns only if most results lack drive data
-  if (prefs.drive) {
-    const carsWithDrive = filtered.filter(c => c.drive && c.drive !== "Unknown").length
-    const keepUnknown = carsWithDrive < filtered.length * 0.3 // if <30% have drive data, keep unknowns
-    filtered = filtered.filter(c => {
-      const carDrive = (c.drive ?? "").toUpperCase()
-      if (!carDrive || carDrive === "UNKNOWN") return keepUnknown
-      const wanted = prefs.drive!.toUpperCase()
-      if (wanted === "AWD") return ["AWD", "4WD", "4X4", "ALL"].some(k => carDrive.includes(k))
-      return carDrive.includes(wanted)
-    })
-  }
-
-  // Horsepower minimum (from purpose presets or chat)
-  if (prefs.hp_min != null) {
-    filtered = filtered.filter(c => {
-      const hp = c.horsepower ?? c.hp
-      if (!hp) return true // keep if unknown
-      return hp >= prefs.hp_min!
-    })
-  }
-
-  // Seats minimum (from purpose: "Для сім'ї з дітьми" → 5+)
-  if (prefs.seats_min != null) {
-    filtered = filtered.filter(c => {
-      if (!c.seats) return true // keep if unknown
-      return c.seats >= prefs.seats_min!
-    })
-  }
-
-  // Purpose body types (soft filter: if car has known body type, it must match one)
-  if (prefs.purpose_body_types.length > 0 && !prefs.body_type) {
-    const allowed = prefs.purpose_body_types.map(b => b.toLowerCase())
-    filtered = filtered.filter(c => {
-      const carBody = (c.body_type ?? c.bodyType ?? "").toLowerCase()
-      if (!carBody || carBody === "unknown" || carBody === "other") return true
-      return allowed.some(a => carBody.includes(a))
-    })
-  }
-
-  // Doors
-  if (prefs.doors != null) {
-    filtered = filtered.filter(c => {
-      if (!c.doors) return true // keep if unknown
-      return c.doors === prefs.doors
-    })
-  }
-
-  // Interior material
-  if (prefs.interior_material) {
-    const wanted = prefs.interior_material.toLowerCase()
-    filtered = filtered.filter(c => {
-      const mat = (c.seatMaterial ?? c.seat_material ?? c.interior_material ?? "").toLowerCase()
-      if (!mat) return true
-      return mat.includes(wanted)
-    })
-  }
-
-  // Required options
-  if (prefs.required_options.length > 0) {
-    filtered = filtered.filter(c => {
-      const allFeatures = [
-        ...(c.safety_features ?? []),
-        ...(c.comfort_features ?? []),
-        ...(c.infotainment ?? []),
-        ...(c.features_ua ?? []),
-      ].map((f: string) => f.toLowerCase())
-
-      return prefs.required_options.every(opt => {
-        const optLower = opt.toLowerCase()
-        return allFeatures.some(f => f.includes(optLower))
-      })
-    })
-  }
-
-  return filtered
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Build description of active filters
@@ -1507,7 +1327,12 @@ export async function POST(req: Request) {
       // Logging must never break the request.
     }
 
-    const message = await generateSearchComment(foundCars, count, chat, tags)
+    // P11: distinguish "parser found nothing" from "parser found cars but the
+    // user's extra filters (engine/mileage/hp/seats/…) removed them all" — the
+    // latter gets an actionable "loosen your filters" message.
+    const message = (count === 0 && result?.filteredEmpty)
+      ? "Знайшов авто за маркою та ціною, але ваші додаткові фільтри (обʼєм двигуна, пробіг, потужність, місця) відсіяли всі варіанти. Спробуйте послабити їх."
+      : await generateSearchComment(foundCars, count, chat, tags)
     const retrySuggestion = count === 0 ? buildRetrySuggestion(chat) : null
 
     return NextResponse.json({

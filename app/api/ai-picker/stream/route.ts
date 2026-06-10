@@ -34,8 +34,14 @@ export async function POST(req: Request): Promise<Response> {
     })
   }
 
-  // Convert turnkey budget → EU price (parser filters by EU price)
-  const euMin = body.budget_min != null ? euPriceFromTurnkey(body.budget_min) : null
+  // Convert turnkey budget → EU price (parser filters by EU price).
+  // Apply the SAME minimum-turnkey-budget floor as /api/ai-picker before
+  // converting, so the AI-down stream path and the normal path agree on the
+  // price floor (previously stream floored the EU price at 5000 instead, which
+  // let through cheaper cars the main path would have excluded).
+  const MIN_TURNKEY_BUDGET = 20000 // keep in sync with route.ts MIN_BUDGET
+  const flooredMin = body.budget_min != null ? Math.max(body.budget_min, MIN_TURNKEY_BUDGET) : null
+  const euMin = flooredMin != null ? euPriceFromTurnkey(flooredMin) : null
   const euMax = body.budget_max != null ? euPriceFromTurnkey(body.budget_max) : null
 
   const qs = new URLSearchParams()
@@ -44,7 +50,7 @@ export async function POST(req: Request): Promise<Response> {
   if (body.vehicle_type) qs.set("vehicle_type", body.vehicle_type)
   if (body.year_from)    qs.set("year_from", String(body.year_from))
   if (body.year_to)      qs.set("year_to", String(body.year_to))
-  if (euMin != null)     qs.set("price_min", String(Math.max(5000, Math.round(euMin))))
+  if (euMin != null)     qs.set("price_min", String(Math.round(euMin)))
   if (euMax != null)     qs.set("price_max", String(Math.round(euMax)))
   if (body.fuel)         qs.set("fuel", body.fuel)
   if (body.transmission) qs.set("transmission", body.transmission)

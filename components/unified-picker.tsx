@@ -13,6 +13,10 @@ import { calcTotalCost, SOURCE_SITES, ratePriceVsMarket, PRICE_RATING_CONFIG } f
 import { upgradeBbcdnUrl } from "@/lib/image-upgrade"
 import { t, tOpt, tp, type Language } from "@/lib/i18n"
 import { useSettings } from "@/lib/settings-context"
+import {
+  FUEL_MAP, BODY_MAP, TRANSMISSION_MAP, DRIVE_MAP, COLOR_MAP, INTERIOR_MAP,
+} from "@/lib/picker-maps"
+import { filterCars, carKey, type FilterPrefs } from "@/lib/car-filter"
 
 // ─── API → CarType mapper ──────────────────────────────────────────────────────
 // The parser API returns snake_case keys; CarType uses camelCase.
@@ -2306,24 +2310,10 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
     try {
       // Build preferences from answers
       const byId = Object.fromEntries(finalAnswers.map(a => [a.questionId, a]))
-      const fuelMap: Record<string, string> = {
-        "Бензин": "Petrol", "Дизель": "Diesel", "Електро": "Electric",
-        "Гібрид": "Hybrid", "Plug-in гібрид": "Hybrid",
-        "Газ (LPG)": "LPG", "Газ (CNG)": "CNG", "Етанол": "Ethanol", "Водень": "Hydrogen",
-      }
-      const bodyMap: Record<string, string> = {
-        "Седан": "Sedan", "Хетчбек": "Hatchback", "Універсал": "Estate",
-        "Позашляховик": "SUV", "Купе": "Coupe", "Кабріолет": "Convertible",
-        "Мікроавтобус": "Van", "Пікап": "Pickup", "Вантажівка": "Truck",
-        "Автобус": "Bus", "Мотоцикл": "Motorcycle", "Багі": "Buggy", "Спецтехніка": "Special",
-      }
-      const transMap: Record<string, string> = {
-        "Автомат": "Automatic", "Механіка": "Manual",
-        "Робот (DSG/DCT)": "Automatic", "Варіатор (CVT)": "Automatic",
-      }
-      const driveMap: Record<string, string> = {
-        "Передній (FWD)": "FWD", "Задній (RWD)": "RWD", "Повний (AWD/4WD)": "AWD",
-      }
+      const fuelMap = FUEL_MAP
+      const bodyMap = BODY_MAP
+      const transMap = TRANSMISSION_MAP
+      const driveMap = DRIVE_MAP
 
       // Budget: selected[0] = "від" (e.g., "30 000"), selected[1] = "до" (e.g., "50 000" or "")
       const cleanNum = (s: string) => {
@@ -2362,24 +2352,37 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
       const seatsMinManual = seatsStr === "7+" ? 7 : seatsStr ? parseInt(seatsStr) : NaN
 
       // Color (UA → EN)
-      const colorMap: Record<string, string> = {
-        "Білий": "White", "Чорний": "Black", "Сірий": "Grey",
-        "Сріблястий": "Silver", "Синій": "Blue", "Червоний": "Red",
-        "Зелений": "Green", "Коричневий": "Brown", "Бежевий": "Beige",
-        "Жовтий": "Yellow",
-      }
-      const color = colorMap[byId.color?.selected[0] ?? ""] ?? null
+      const color = COLOR_MAP[byId.color?.selected[0] ?? ""] ?? null
 
       // Interior material (UA → EN)
-      const interiorMap: Record<string, string> = {
-        "Шкіра": "Leather", "Екошкіра": "Eco-leather", "Тканина": "Fabric",
-        "Велюр": "Velour", "Алькантара": "Alcantara",
-        "Комбінований": "Combination", "Карбон": "Carbon",
-      }
-      const interior = interiorMap[byId.interior?.selected[0] ?? ""] ?? null
+      const interior = INTERIOR_MAP[byId.interior?.selected[0] ?? ""] ?? null
 
       // Save user budget for later use in handleApproveSuggestion
       setUserBudget({ min: budgetMin, max: budgetMax })
+
+      // Client-side filter set for the direct-stream path (AI unavailable).
+      // The parser /search/stream can't filter on mileage/engine/hp/seats/doors/
+      // interior, so without this the AI-down path returned UNFILTERED cars,
+      // silently ignoring those choices. Apply the same filter the server path uses.
+      const streamFilterPrefs: FilterPrefs = {
+        pairs: [],
+        fuel: fuelMap[byId.fuel?.selected[0] ?? ""] ?? null,
+        body_type: bodyMap[byId.body?.selected[0] ?? ""] ?? null,
+        color: color ?? null,
+        drive: driveMap[byId.drive?.selected[0] ?? ""] ?? null,
+        year_from: byId.year?.selected[0] ? parseInt(byId.year.selected[0]) : null,
+        year_to: byId.year?.selected[1] ? parseInt(byId.year.selected[1]) : null,
+        mileage_min: isNaN(mileageMin) ? null : mileageMin,
+        mileage_max: isNaN(mileageMax) ? null : mileageMax,
+        displacement_min: isNaN(engineMin) ? null : engineMin,
+        displacement_max: isNaN(engineMax) ? null : engineMax,
+        hp_min: isNaN(hpMin) ? null : hpMin,
+        seats_min: isNaN(seatsMinManual) ? null : seatsMinManual,
+        doors: isNaN(doors) ? null : doors,
+        interior_material: interior ?? null,
+        required_options: [],
+        purpose_body_types: byId.purpose?.selected ?? [],
+      }
 
       // Cancel previous request if any
       abortRef.current?.abort()
@@ -2422,16 +2425,21 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
             onCars: (cars) => {
               receivedAny = true
               for (const c of cars) {
-                const id = (c as any).source_url ?? (c as any).id
+                const id = carKey(c)
                 if (id && seenIds.has(id)) continue
                 if (id) seenIds.add(id)
                 accumulated.push(c)
               }
-              setResults([...accumulated])
+              setResults(filterCars([...accumulated], streamFilterPrefs))
             },
             onDone: () => {
               setLoadingResults(false)
-              if (!receivedAny) setError("За вашими параметрами авто не знайдено. Спробуйте розширити критерії.")
+              const shown = filterCars(accumulated, streamFilterPrefs)
+              if (shown.length === 0) {
+                setError(receivedAny
+                  ? "За вашими фільтрами нічого не підійшло. Спробуйте послабити критерії (обʼєм, пробіг, потужність)."
+                  : "За вашими параметрами авто не знайдено. Спробуйте розширити критерії.")
+              }
             },
             onError: (msg) => {
               if (!receivedAny) setError("Не вдалося з'єднатися з парсером. " + msg)
@@ -2474,16 +2482,21 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
             onCars: (cars) => {
               receivedAny = true
               for (const c of cars) {
-                const id = (c as any).source_url ?? (c as any).id
+                const id = carKey(c)
                 if (id && seenIds.has(id)) continue
                 if (id) seenIds.add(id)
                 accumulated.push(c)
               }
-              setResults([...accumulated])
+              setResults(filterCars([...accumulated], streamFilterPrefs))
             },
             onDone: () => {
               setLoadingResults(false)
-              if (!receivedAny) setError("За вашими параметрами авто не знайдено. Спробуйте розширити критерії.")
+              const shown = filterCars(accumulated, streamFilterPrefs)
+              if (shown.length === 0) {
+                setError(receivedAny
+                  ? "За вашими фільтрами нічого не підійшло. Спробуйте послабити критерії (обʼєм, пробіг, потужність)."
+                  : "За вашими параметрами авто не знайдено. Спробуйте розширити критерії.")
+              }
             },
             onError: (msg) => {
               if (!receivedAny) setError("Не вдалося з'єднатися з парсером. " + msg)
@@ -2614,16 +2627,8 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
     const byId = Object.fromEntries(answers.map(a => [a.questionId, a]))
     const cleanInt = (s: string) => { const n = parseInt(s.replace(/[^\d]/g, "")); return isNaN(n) ? null : n }
     const cleanFlt = (s: string) => { const n = parseFloat(s.replace(/,/g, ".").replace(/[^\d.]/g, "")); return isNaN(n) ? null : n }
-    const colorMap: Record<string, string> = {
-      "Білий": "White", "Чорний": "Black", "Сірий": "Grey", "Сріблястий": "Silver",
-      "Синій": "Blue", "Червоний": "Red", "Зелений": "Green",
-      "Коричневий": "Brown", "Бежевий": "Beige", "Жовтий": "Yellow",
-    }
-    const interiorMap: Record<string, string> = {
-      "Шкіра": "Leather", "Екошкіра": "Eco-leather", "Тканина": "Fabric",
-      "Велюр": "Velour", "Алькантара": "Alcantara",
-      "Комбінований": "Combination", "Карбон": "Carbon",
-    }
+    const colorMap = COLOR_MAP
+    const interiorMap = INTERIOR_MAP
     const formMileageMin = cleanInt(byId.mileage?.selected[0] ?? "")
     const formMileageMax = cleanInt(byId.mileage?.selected[1] ?? "")
     const formEngineMin = cleanFlt(byId.engine?.selected[0] ?? "")
@@ -2647,7 +2652,12 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
-          messages: [],
+          // P2: forward the free-text prompt so constraints the form can't express
+          // (e.g. "з панорамним дахом", a specific colour) are honoured on approve
+          // too — not just on /suggest and "search all". The explicit suggestion
+          // pair below stays first, so this only ADDS constraints, never replaces
+          // the picked make/model.
+          messages: freeText?.trim() ? [{ role: "user", content: freeText.trim() }] : [],
           answers,
           triggerSearch: true,
           clientOrderId: makeUuid(),
@@ -2722,9 +2732,9 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
       }
 
       setResults(prev => {
-        const newUrls = new Set(newCars.map((c: CarType) => c.sourceUrl || (c as any).source_url))
+        const newUrls = new Set(newCars.map((c: CarType) => carKey(c)))
         const keptOld = prev
-          .filter(c => !newUrls.has(c.sourceUrl || (c as any).source_url))
+          .filter(c => !newUrls.has(carKey(c)))
           .filter(matchesNewCriteria)
         return [...newCars, ...keptOld]
       })
@@ -2747,7 +2757,7 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
       // we'd hide the spinner the new call just turned on.
       if (!controller.signal.aborted) setSearchingIndex(null)
     }
-  }, [suggestions, answers])
+  }, [suggestions, answers, freeText, userBudget])
 
   // ── Fallback: search all without suggestions ──────────────────────────
   const handleSearchAll = useCallback(async () => {
