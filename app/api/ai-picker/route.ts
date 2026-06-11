@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server"
 
+// A cold parser scrape for a rare query (e.g. "Lexus SUV 50-55k") can take
+// 15-30s. Without this, the function hits Vercel's default ~10-15s ceiling and
+// is killed mid-search — the client shows "interrupted" while the parser on
+// Railway keeps scraping. 60s gives cold searches room to finish.
+export const maxDuration = 60
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Types
 // ═══════════════════════════════════════════════════════════════════════════════

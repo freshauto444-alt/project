@@ -1,5 +1,8 @@
 import { createClient } from "@supabase/supabase-js"
 
+// Multi-suggestion Claude generation can take 15-25s; lift past Vercel default.
+export const maxDuration = 60
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  AI Car Suggestion Endpoint — Streaming SSE
 //

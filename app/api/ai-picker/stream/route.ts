@@ -6,6 +6,9 @@
 
 import { euPriceFromTurnkey } from "@/lib/constants"
 
+// Cold scrapes can run 15-30s; give the SSE proxy room past Vercel's default ceiling.
+export const maxDuration = 60
+
 const PARSER_URL = process.env.PARSER_API_URL || "http://localhost:8000"
 const PARSER_KEY = process.env.PARSER_API_KEY || "freshauto_secret_2024"
 
