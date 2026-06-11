@@ -6,8 +6,6 @@ export interface Car {
   price: number
   mileage: number
   engine: string
-  engineCc?: number | null
-  description?: string | null
   fuel: string
   fuelUa: string
   drive: string
@@ -66,8 +64,6 @@ export function mapDbCar(row: Record<string, unknown>): Car {
     price: Number(row.price),
     mileage: row.mileage as number,
     engine: nv(row.engine) as string,
-    engineCc: typeof row.engine_cc === "number" ? row.engine_cc : null,
-    description: nv(row.description),
     fuel: nv(row.fuel) as string,
     fuelUa: nv(row.fuel_ua) as string,
     drive: nv(row.drive) as string,

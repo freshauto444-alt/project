@@ -707,14 +707,6 @@ export default function CarDetailsModal({ car, onClose, onCheckout }: CarDetails
                     ))}
                   </div>
 
-                  {/* Seller's description — shown only when the listing has one */}
-                  {car.description && (
-                    <div className="rounded-xl bg-secondary/20 p-4">
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5">Опис</div>
-                      <p className="text-xs text-foreground/90 leading-relaxed whitespace-pre-line">{car.description}</p>
-                    </div>
-                  )}
-
                   {/* Cost breakdown with visual bar */}
                   <CostBreakdownVisual car={car} />
 
