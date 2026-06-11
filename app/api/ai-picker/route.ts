@@ -1625,6 +1625,10 @@ ${hasNoCars
 
 В усіх інших випадках — звичайний текст.
 
+═══ НОВА МАРКА/МОДЕЛЬ — СПЕРШУ ПІДТВЕРДИ ПАРАМЕТРИ ═══
+
+Якщо клієнт називає НОВУ марку чи модель (напр. "хочу BMW X5", "а Tiguan?", "цікавить Audi Q5"), а в блоці "Поточні параметри пошуку" вже є бюджет/роки/попередня модель — НЕ повертай TRIGGER_SEARCH одразу. Спершу коротко, людською мовою, назви поточні параметри (бюджет під ключ у €, діапазон років) і запитай: лишаємо ці параметри для нової моделі чи змінюємо? Якщо клієнт назвав лише марку без моделі (напр. просто "BMW") — додатково уточни, яка модель цікавить. Поверни TRIGGER_SEARCH ТІЛЬКИ після того, як клієнт підтвердив параметри ("так", "лишай", "давай") або вказав нові (інший бюджет/роки/модель). Приклад: "Зрозумів, дивимось BMW X5. Лишаємо ваші торішні рамки — бюджет до €40k під ключ і роки 2020-2024? Чи скоригуємо щось?"
+
 ═══ ПІСЛЯ ПОШУКУ — ОБОВʼЯЗКОВО ═══
 
 1. Виділи 1-2 найкращі варіанти і поясни ЧОМУ (через конкретну характеристику + що це дає клієнту)
@@ -1937,7 +1941,29 @@ ${hasNoCars
   // answer conversationally — it already has the shown cars in carsContext.
   const detailIntent = /про це авто|про цю машин|про цей варіант|про це\b|про нього|про неї|детальн|докладн|комплектац|характеристик|сервісн|що включ|що по цьому|більше про це/i.test(lastUserMsg)
 
-  const isDirectSearch = !detailIntent && searchKeywords.some(k => lastUserMsg.includes(k))
+  // When the client names a NEW make/model while a prior search context already
+  // exists, don't instantly re-search with the old parameters. Route to Claude
+  // so it can first state the current params (budget/years/model) and ask whether
+  // to keep or change them — then search only after the client confirms.
+  const brandKeywords = [
+    "bmw", "audi", "mercedes", "volkswagen", "vw", "volvo", "skoda", "ford",
+    "toyota", "honda", "mazda", "hyundai", "kia", "opel", "renault", "peugeot",
+    "seat", "porsche", "tesla", "nissan", "subaru", "mitsubishi", "lexus",
+    "jeep", "jaguar", "land rover", "dacia", "fiat", "citroen", "mini",
+    "пасат", "октавіа", "октавия", "гольф", "тигуан", "бмв", "ауді", "ауди",
+    "мерс", "мерседес", "вольво", "шкода", "тойота", "хюндай", "хундай", "форд",
+    "рено", "пежо", "опель", "нісан", "вольцваген", "фольксваген", "фольк",
+  ]
+  const mentionsBrand = brandKeywords.some(k => lastUserMsg.includes(k))
+  const cp = chatPreferences as ChatPreferences | null
+  const hasExistingParams = !!cp && (
+    cp.budget_min != null || cp.budget_max != null || cp.budget != null ||
+    cp.year_from != null || cp.year_to != null ||
+    (Array.isArray(cp.pairs) && cp.pairs.length > 0)
+  )
+  const wantsNewCarConfirm = mentionsBrand && hasExistingParams && !detailIntent
+
+  const isDirectSearch = !detailIntent && !wantsNewCarConfirm && searchKeywords.some(k => lastUserMsg.includes(k))
 
   if (isDirectSearch) {
     return NextResponse.json({
