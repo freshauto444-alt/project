@@ -1278,7 +1278,14 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
           // Preceding char: start-of-string OR non-digit. Trailing char: not a digit.
           const reqNorm = reqModel.replace(/[^a-z0-9]/g, "")
           const carNorm = carModel.replace(/[^a-z0-9]/g, "")
-          const tokenRe = new RegExp(`(?:^|[^0-9])${reqNorm}(?![0-9])`, "i")
+          // Purely-alphabetic models (Mercedes GLC/GLE/GLS/GLA/EQE, CLA, AMG "GT"…)
+          // have the trim number right after the letters — "GLC" MUST match
+          // "GLC 220 d". Only guard against a trailing digit when the model itself
+          // ends in a digit (a6 ≠ a60, x5 ≠ x50, m5 ≠ m50i).
+          const endsWithDigit = /[0-9]$/.test(reqNorm)
+          const tokenRe = endsWithDigit
+            ? new RegExp(`(?:^|[^0-9])${reqNorm}(?![0-9])`, "i")
+            : new RegExp(`(?:^|[^a-z0-9])${reqNorm}`, "i")
           if (tokenRe.test(carNorm)) return true
 
           return false
