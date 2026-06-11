@@ -856,6 +856,7 @@ function AIChat({
           clientOrderId: orderId,
           chatPreferences, // Pass previous preferences for cumulative search
           journey,
+          prevCount: cars.length, // so the assistant can admit when results didn't change
         }),
       })
       const data = await res.json()

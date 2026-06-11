@@ -439,6 +439,21 @@ interface RetrySuggestion {
   prefs: Partial<ChatPreferences>       // diff to merge into current preferences
 }
 
+// One-tap "widen the year window" — offered when a search returns few cars and
+// the year is likely the limiter. Lowers year_from by 2 and opens the top a bit.
+function buildWidenYearSuggestion(prefs: ChatPreferences): RetrySuggestion {
+  const curFrom = prefs.year_from ?? null
+  const curTo = prefs.year_to ?? null
+  const thisYear = new Date().getFullYear()
+  const newFrom = curFrom != null ? Math.max(2010, curFrom - 2) : null
+  const newTo = curTo != null ? Math.min(thisYear, curTo + 2) : null
+  const range = newFrom != null ? `${newFrom}–${newTo ?? "тепер"}` : `до ${newTo}`
+  return {
+    label: `Розширити роки (${range})`,
+    prefs: { year_from: newFrom, year_to: newTo },
+  }
+}
+
 function buildRetrySuggestion(prefs: ChatPreferences | null): RetrySuggestion | null {
   if (!prefs) return null
   // Pick the single tightest constraint to loosen (most likely to unlock results).
@@ -496,6 +511,7 @@ async function generateSearchComment(
   totalCount: number,
   prefs: ChatPreferences | null,
   tags: string[],
+  opts?: { messages?: ChatMessage[]; prevCount?: number | null; wantsMore?: boolean },
 ): Promise<string> {
   if (totalCount === 0) {
     // Identify tightest constraint — suggest loosening ONE specific thing instead of vague advice
@@ -550,7 +566,34 @@ ${constraints.length ? `Найжорсткіші обмеження (канди�
     return parts.filter(Boolean).join(", ")
   }).join("\n")
 
+  // Continuity context — avoid repeating the same pitch, be honest when a
+  // re-search returned the same/no-more cars, and steer toward widening the
+  // YEAR (usually the real limiter) + offer monitoring / search-to-order.
+  const recentAssistant = (opts?.messages ?? [])
+    .filter(m => m.role === "assistant")
+    .slice(-3)
+    .map(m => m.content)
+    .join(" | ")
+  const prevCount = opts?.prevCount ?? null
+  const sameAsBefore = prevCount != null && prevCount > 0 && prevCount === totalCount
+  const fewResults = totalCount <= 6
+  const yf = prefs?.year_from ?? null
+  const yt = prefs?.year_to ?? null
+  const continuityNote = [
+    recentAssistant
+      ? `Твої попередні репліки в цьому діалозі — НЕ повторюй їх дослівно і НЕ пере-пітч те саме авто тими ж словами, зміни фокус чи виділи інший варіант: "${recentAssistant.slice(0, 600)}"`
+      : "",
+    opts?.wantsMore ? "Клієнт просить БІЛЬШЕ варіантів." : "",
+    sameAsBefore
+      ? `Результат той самий, що й минулого разу (${totalCount} авто) — чесно це визнай, не вдавай ніби зʼявилось щось нове.`
+      : "",
+    fewResults
+      ? `Варіантів мало (${totalCount}). Якщо обмежує РІК (зараз ${yf ?? "?"}–${yt ?? "будь-який"}) — запропонуй розширити саме рік (напр. ${yf ? yf - 2 : 2017}–${yt ?? 2024}), бо це дає більше, ніж зміна бюджету. Доречно також запропонувати поставити на моніторинг (сповістимо щойно зʼявиться) або пошук під замовлення з Німеччини, де вибір ширший.`
+      : "",
+  ].filter(Boolean).join("\n")
+
   const prompt = `Ти — старший менеджер Fresh Auto, 8+ років у підборі авто з ЄС. Клієнт щойно запустив пошук, знайдено ${totalCount} варіантів.
+${continuityNote ? `\n═══ КОНТЕКСТ ДІАЛОГУ (врахуй обовʼязково) ═══\n${continuityNote}\n` : ""}
 
 Параметри клієнта: ${JSON.stringify(prefs)}
 Анкета: ${tags.join(", ") || "не заповнена"}
@@ -575,6 +618,7 @@ ${carsDesc}
 
 ЗАБОРОНЕНО:
 - Повторювати список критеріїв пошуку (клієнт їх знає)
+- Повторювати ту саму рекомендацію тими ж словами, що в попередній репліці (дивись КОНТЕКСТ ДІАЛОГУ — виділи інший варіант або зміни кут)
 - Казати "перегляньте нижче" (авто вже під чатом)
 - Емодзі, markdown, зірочки, нумерація в відповіді
 - Ваніль ("гарні варіанти", "непогані авто")
@@ -671,6 +715,13 @@ ${prevContext}${journeyContext}
 - "до 1.6л" / "не більше 1.6" → displacement_min: null, displacement_max: 1.6
 - "2.0 TDI" / "2.0 дизель" → displacement_min: 2.0, displacement_max: 2.0
 - "1.5-2.0л" → displacement_min: 1.5, displacement_max: 2.0
+
+РІК ВИПУСКУ (важливо — "від X" це НИЖНЯ межа, НЕ фіксований рік):
+- "від 2019" / "з 2019 року" / "2019+" / "новіше 2019" → year_from: 2019, year_to: null
+- "до 2021" / "не старше 2021" → year_to: 2021, year_from: null
+- "2019-2022" / "між 2019 і 2022" → year_from: 2019, year_to: 2022
+- "2020 рік" (один конкретний рік) → year_from: 2020, year_to: 2020
+- НІКОЛИ не став year_to рівним year_from для запиту "від X" — це обмежує вибірку одним роком.
 
 МАРКИ ТА МОДЕЛІ:
 - "бмв 5 серії" / "п'ятірка бмв" → make: "BMW", model: "5 Series"
@@ -1404,6 +1455,7 @@ export async function POST(req: Request) {
     loadMore,
     chatPreferences,
     journey, // { freeText, approvedSuggestion, rejectedSuggestions }
+    prevCount, // how many cars were shown before this search (for "didn't change" honesty)
   } = await req.json()
 
   const tags: string[] = []
@@ -1507,8 +1559,19 @@ export async function POST(req: Request) {
       // Logging must never break the request.
     }
 
-    const message = await generateSearchComment(foundCars, count, chat, tags)
-    const retrySuggestion = count === 0 ? buildRetrySuggestion(chat) : null
+    const message = await generateSearchComment(foundCars, count, chat, tags, {
+      messages: messages as ChatMessage[],
+      prevCount: typeof prevCount === "number" ? prevCount : null,
+      wantsMore,
+    })
+    // Retry chip: 0 results → loosen the tightest constraint; few results (≤6)
+    // with a year window → offer to widen the YEAR (usually the real limiter),
+    // a one-tap action that actually adds cars.
+    const retrySuggestion =
+      count === 0 ? buildRetrySuggestion(chat)
+      : (count <= 6 && (chat.year_from != null || chat.year_to != null))
+          ? buildWidenYearSuggestion(chat)
+          : null
 
     return NextResponse.json({
       message,
@@ -1529,9 +1592,17 @@ export async function POST(req: Request) {
     const count = result?.count ?? 0
     const foundCars = result?.cars ?? []
     const message = count > 0
-      ? await generateSearchComment(foundCars, count, chatPreferences, tags)
-      : "Більше варіантів за цими параметрами поки немає. Спробуйте трохи змінити критерії — наприклад розширити бюджет або додати ще один тип кузова."
-    const retrySuggestion = count === 0 ? buildRetrySuggestion(chatPreferences) : null
+      ? await generateSearchComment(foundCars, count, chatPreferences, tags, {
+          messages: messages as ChatMessage[],
+          prevCount: typeof prevCount === "number" ? prevCount : null,
+          wantsMore: true,
+        })
+      : "Більше варіантів за цими параметрами поки немає. Найчастіше тут допомагає розширити рік випуску — можу це зробити, або поставити авто на моніторинг і шукати під замовлення з Німеччини, де вибір ширший."
+    const hasYearWindow = chatPreferences.year_from != null || chatPreferences.year_to != null
+    const retrySuggestion =
+      count === 0 ? (hasYearWindow ? buildWidenYearSuggestion(chatPreferences) : buildRetrySuggestion(chatPreferences))
+      : (count <= 6 && hasYearWindow) ? buildWidenYearSuggestion(chatPreferences)
+      : null
     return NextResponse.json({
       message,
       searching: false,
