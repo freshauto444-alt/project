@@ -1931,7 +1931,13 @@ ${hasNoCars
     "дизель", "бензин", "електро", "гібрид", "седан", "суv", "хетч", "позашляховик",
     "універсал", "купе", "автомат", "механіка",
   ]
-  const isDirectSearch = searchKeywords.some(k => lastUserMsg.includes(k))
+  // Detail/info questions about an already-shown car must NOT start a new search,
+  // even when they contain a search-ish word like "більше" ("розкажи більше про
+  // це авто" tripped the keyword fallback and re-ran the parser). Let Claude
+  // answer conversationally — it already has the shown cars in carsContext.
+  const detailIntent = /про це авто|про цю машин|про цей варіант|про це\b|про нього|про неї|детальн|докладн|комплектац|характеристик|сервісн|що включ|що по цьому|більше про це/i.test(lastUserMsg)
+
+  const isDirectSearch = !detailIntent && searchKeywords.some(k => lastUserMsg.includes(k))
 
   if (isDirectSearch) {
     return NextResponse.json({
