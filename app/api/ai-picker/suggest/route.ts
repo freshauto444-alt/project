@@ -144,6 +144,29 @@ function extractCompleteSuggestions(
 
 // ── Map raw Claude suggestion → normalized CarSuggestion ─────────────────────
 
+// Year a brand actually started selling in the EUROPEAN market. We import from
+// the EU, so a brand/model that didn't exist there yields 0 parser results no
+// matter what the AI claims.
+const EU_LAUNCH_YEAR: Record<string, number> = {
+  genesis: 2021,
+  polestar: 2020,
+  byd: 2023,
+  nio: 2022,
+}
+
+// Deterministic safety net (prompt isn't 100% reliable): drop a mapped
+// suggestion that can never parse — an inverted/empty year range, or a brand
+// whose EU availability doesn't reach the requested upper year.
+function isUsableSuggestion(s: any): boolean {
+  const sp = s?.searchParams ?? {}
+  const yf = typeof sp.year_from === "number" ? sp.year_from : null
+  const yt = typeof sp.year_to === "number" ? sp.year_to : null
+  if (yf != null && yt != null && yf > yt) return false // inverted/empty range
+  const launch = EU_LAUNCH_YEAR[String(sp.make ?? s?.make ?? "").toLowerCase()]
+  if (launch != null && yt != null && yt < launch) return false // brand not in EU for those years
+  return true
+}
+
 function mapRawSuggestion(
   raw: any,
   prefs: SuggestRequest["preferences"],
@@ -390,9 +413,13 @@ yearRange має відповідати РЕАЛЬНИМ рокам конкре
 ═══ ДОСТУПНІСТЬ НА ЄВРОПЕЙСЬКОМУ РИНКУ (КРИТИЧНО — інакше парсер знайде 0) ═══
 
 Модель і yearRange мають існувати на ЄВРОПЕЙСЬКОМУ вторинному ринку у вказані роки — НЕ глобально (US/Korea/Asia не рахуються, ми возимо з ЄС). Деякі марки вийшли в Європу пізно:
-• Genesis — продається в Європі ЛИШЕ з ~2021 (G80/G70/GV70/GV80). G80 2016-2020 існує в Кореї/США, але НЕ в ЄС. НЕ пропонуй Genesis для років до 2021.
+• Genesis — продається в Європі ЛИШЕ з ~2021 (G80/G70/GV70/GV80). G80 2016-2020 існує в Кореї/США, але НЕ в ЄС.
 • Інші «молоді в ЄС» бренди (BYD, Nio, відроджений MG, Polestar з 2020) — лише останні роки.
-ПРАВИЛО: якщо year-діапазон клієнта НЕ перетинається з роками доступності марки в ЄС — НЕ пропонуй цю марку взагалі (візьми іншу альтернативу). Краще релевантна марка з реальними авто, ніж «правильна на папері», якої немає на ринку ЄС.
+
+ЖОРСТКЕ ПРАВИЛО (перевизначає інструкцію «показати з feasibilityWarning»):
+1. Якщо роки доступності марки в ЄС НЕ перетинаються з year-вікном клієнта — ПОВНІСТЮ ВИКИНЬ цю марку зі списку. НЕ показуй її навіть із попередженням. Заміни її іншою РЕАЛЬНОЮ альтернативою. (Genesis при year_to=2020 → взагалі не пропонуй Genesis, бо в ЄС його там 0.)
+2. yearRange ЗАВЖДИ має бути валідним: yearFrom ≤ yearTo. НІКОЛИ не виводь інвертований діапазон типу "2021-2020" — якщо після застосування обмежень yearFrom вийшов більший за yearTo, діапазон ПОРОЖНІЙ → ця модель НЕ підходить → викинь її і візьми іншу.
+Краще релевантна марка з реальними авто, ніж «правильна на папері», якої немає на ринку ЄС.
 
 ═══ ВАРІАТИВНІСТЬ — НЕ ПОВТОРЮЙ ТИПОВІ ПАРИ ═══
 
@@ -566,6 +593,7 @@ ${hasBudget
                   if (sentCount >= 3) break
                   if (rawSugg && typeof rawSugg === "object" && rawSugg.make) {
                     const mapped = mapRawSuggestion(rawSugg, prefs)
+                    if (!isUsableSuggestion(mapped)) continue // skip un-parseable (bad years / not-in-EU brand)
                     controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: mapped }))
                     sentCount++
                   }
@@ -580,10 +608,11 @@ ${hasBudget
                     const match = cleaned.match(/\{[\s\S]*\}/)
                     if (match) {
                       const rawSugg = JSON.parse(match[0])
-                      if (rawSugg?.make && sentCount < 3) {
+                      const mapped2 = rawSugg?.make ? mapRawSuggestion(rawSugg, prefs) : null
+                      if (mapped2 && sentCount < 3 && isUsableSuggestion(mapped2)) {
                         controller.enqueue(sseEvent(encoder, {
                           type: "suggestion",
-                          suggestion: mapRawSuggestion(rawSugg, prefs),
+                          suggestion: mapped2,
                         }))
                         sentCount++
                       }
