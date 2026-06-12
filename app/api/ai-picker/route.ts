@@ -1115,11 +1115,6 @@ async function triggerParser(
   // where AI's yearRange ends up too tight for the actual stock. Without it
   // the user sees "0 results" even though cars exist in adjacent years.
   const hasYearWindow = commonPayload.year_from != null || commonPayload.year_to != null
-  // Set when the cascade had to DROP the year window (step 3) to find anything —
-  // i.e. the AI-suggested years don't exist in the EU market (Genesis G80
-  // "2016-2020", Infiniti, etc.). In that case re-applying the year filter
-  // client-side would drop the very cars we just found → false "0 results".
-  let anyYearDropped = false
   const searchWithFallback = async (p: CarPair) => {
     // Normalize trailing generation suffixes (e.g. "passat b9" → "passat").
     // AS24's slug map only has base model names; "passat-b9" resolves to a
@@ -1148,10 +1143,7 @@ async function triggerParser(
         make: p.make,
         model,
       })
-      if (third && third.count > 0) {
-        anyYearDropped = true
-        return third
-      }
+      if (third && third.count > 0) return third
     }
 
     // All empty → return empty. Frontend shows the red "0 found" message.
@@ -1185,11 +1177,6 @@ async function triggerParser(
   // Merge survey-form values (from extractSearchParams) with chat-extracted prefs
   const filterPrefs: ChatPreferences = {
     ...chat,
-    // Don't re-impose the year window the parser had to drop to find cars —
-    // otherwise niche models (Genesis/Infiniti) whose AI-suggested years don't
-    // exist in the EU market get filtered back to a false "0 results".
-    year_from: anyYearDropped ? null : chat.year_from,
-    year_to: anyYearDropped ? null : chat.year_to,
     displacement_min: chat.displacement_min ?? base.displacement_min ?? null,
     displacement_max: chat.displacement_max ?? base.displacement_max ?? null,
     hp_min: chat.hp_min ?? base.hp_min ?? null,
