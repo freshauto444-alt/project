@@ -500,7 +500,9 @@ E. Якщо є дані про наявність у стоці — пріори
 • Перформанс-лінійки: Audi S/RS (S3/S4/S5/RS3), BMW M/M-Performance (M2/M240i/M340i/M3/M4), Mercedes-AMG (A35/A45/C43/CLA45), VW Golf GTI/R, Hyundai N (i30 N/i20 N), Cupra (Leon/Formentor), Honda Type R, Toyota GR (Supra/GR86/Yaris), Porsche (Cayman/Boxster/718), Ford ST/RS, Renault RS.
 • НЕ пропонуй базову некомплектну версію як «спортивну» (звичайний Hyundai i30, базовий Golf, A3 1.0 — це НЕ спорт). Базовий хетч ≠ спорт.
 
-ВІДПОВІДНІСТЬ БЮДЖЕТУ: підбирай авто, що ВИКОРИСТОВУЄ бюджет, а не сильно дешевше. Для спорт-бюджету €45k не пропонуй €30k хот-хетч (i30 N), коли в цей бюджет реально вкладаються сильніші: Audi S4/S5, BMW M240i/M340i, Porsche Cayman (базовий 2.0 718), Toyota Supra, Golf R, AMG A45/CLA45, Audi TTS. Дешевший варіант доречний ЛИШЕ якщо клієнт явно просив зекономити.
+ВІДПОВІДНІСТЬ БЮДЖЕТУ: підбирай авто, що ВИКОРИСТОВУЄ бюджет, а не сильно дешевше. Для спорт-бюджету €45k не пропонуй €30k хот-хетч (i30 N), коли в цей бюджет реально вкладаються сильніші: Audi S4/S5, BMW M240i/M340i, Golf R, AMG A45/CLA45, Audi TTS.
+
+ГОЛОВНЕ ДЖЕРЕЛО — МЕНЮ: спочатку шукай перформанс-моделі в МЕНЮ КАНДИДАТІВ (вони реально є на ринку ЗАРАЗ). НЕ називай рідкісну спорт-модель з памʼяті (Porsche Cayman/718, Toyota Supra, Audi TTS тощо), якщо її НЕМАЄ в меню — її майже напевно не знайдеться, і клієнт отримає 0. Якщо в меню в цьому бюджеті немає жодної справді спортивної моделі — НЕ вигадуй і НЕ підставляй позашляховик/комфорт-седан як «спорт»: чесно дай те зі спортивного, що найреальніше, і познач у concerns, що вибір спортивного в цьому бюджеті зараз обмежений. Дешевший варіант доречний ЛИШЕ якщо клієнт явно просив зекономити.
 
 ═══ yearRange = РОКИ МОДЕЛЬНОГО ПОКОЛІННЯ ═══
 
@@ -683,6 +685,17 @@ ${hasBudget
         let lineBuf = ""
         let textAccum = ""
         let sentCount = 0
+        // T4 pre-flight gate: only stream picks that are grounded in real
+        // inventory (the menu is already budget/year/body-filtered, so grounded
+        // ⇒ findable now). Ungrounded picks — e.g. a sporty Cayman we don't have
+        // in this budget — almost always return 0, so hold them back and release
+        // only as a last resort (if NOTHING grounds) so the UI is never blank.
+        // Disabled when there's no menu at all (size 0) → old behavior.
+        const gateOn = inventoryKeys.size > 0
+        let groundedSent = 0 // grounded picks actually shown (drives the `thin` signal)
+        const heldUngrounded: object[] = []
+        const isGroundedSugg = (rawSugg: any): boolean =>
+          gateOn && inventoryKeys.has(groundingKey(rawSugg.make, rawSugg.model_display ?? rawSugg.model_search ?? rawSugg.model ?? ""))
 
         while (true) {
           const { done, value } = await reader.read()
@@ -714,13 +727,14 @@ ${hasBudget
                   if (rawSugg && typeof rawSugg === "object" && rawSugg.make) {
                     const mapped = mapRawSuggestion(rawSugg, prefs)
                     if (!isUsableSuggestion(mapped)) continue // skip un-parseable (bad years / not-in-EU brand)
-                    // T3: tag whether this pick is grounded in real inventory
-                    // (something we just parsed → guaranteed findable). Additive
-                    // signal only — T4 will act on it (drop/replace 0-result picks).
-                    const grounded = inventoryKeys.size > 0 &&
-                      inventoryKeys.has(groundingKey(rawSugg.make, rawSugg.model_display ?? rawSugg.model_search ?? rawSugg.model ?? ""))
-                    controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: { ...mapped, grounded } }))
+                    const grounded = isGroundedSugg(rawSugg)
+                    if (gateOn && !grounded) {
+                      if (heldUngrounded.length < 3) heldUngrounded.push({ ...mapped, grounded: false })
+                      continue // T4: don't show a pick with no matching inventory
+                    }
+                    controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: { ...mapped, grounded: gateOn ? true : undefined } }))
                     sentCount++
+                    if (gateOn) groundedSent++
                   }
                 }
               }
@@ -735,16 +749,35 @@ ${hasBudget
                       const rawSugg = JSON.parse(match[0])
                       const mapped2 = rawSugg?.make ? mapRawSuggestion(rawSugg, prefs) : null
                       if (mapped2 && sentCount < 3 && isUsableSuggestion(mapped2)) {
-                        const grounded = inventoryKeys.size > 0 &&
-                          inventoryKeys.has(groundingKey(rawSugg.make, rawSugg.model_display ?? rawSugg.model_search ?? rawSugg.model ?? ""))
-                        controller.enqueue(sseEvent(encoder, {
-                          type: "suggestion",
-                          suggestion: { ...mapped2, grounded },
-                        }))
-                        sentCount++
+                        const grounded = isGroundedSugg(rawSugg)
+                        if (gateOn && !grounded) {
+                          if (heldUngrounded.length < 3) heldUngrounded.push({ ...mapped2, grounded: false })
+                        } else {
+                          controller.enqueue(sseEvent(encoder, {
+                            type: "suggestion",
+                            suggestion: { ...mapped2, grounded: gateOn ? true : undefined },
+                          }))
+                          sentCount++
+                          if (gateOn) groundedSent++
+                        }
                       }
                     }
                   } catch { /* incomplete JSON, ignore */ }
+                }
+                // T4: grounded gate left us with nothing → release best-effort
+                // held picks so the UI isn't blank (these may not be on the
+                // market right now — the `thin` notice flags that to the client).
+                if (gateOn && sentCount === 0 && heldUngrounded.length > 0) {
+                  for (const s of heldUngrounded.slice(0, 3)) {
+                    controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: s }))
+                    sentCount++
+                  }
+                }
+                if (gateOn && groundedSent < 3) {
+                  // Fewer than 3 GROUNDED picks for this request — this segment is
+                  // thin on the market (any cards shown beyond groundedSent are
+                  // best-effort, possibly not on the market). T5 → honest CTA.
+                  controller.enqueue(sseEvent(encoder, { type: "thin", shown: sentCount, grounded: groundedSent }))
                 }
                 controller.enqueue(sseEvent(encoder, { type: "done" }))
               }
