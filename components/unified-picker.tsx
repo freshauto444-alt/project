@@ -1672,6 +1672,7 @@ function SuggestionsScreen({
   approvedIndices,
   searchingIndex,
   error,
+  thin,
 }: {
   suggestions: Suggestion[]
   loading: boolean
@@ -1683,6 +1684,7 @@ function SuggestionsScreen({
   approvedIndices: Set<number>
   searchingIndex: number | null
   error: string | null
+  thin: { shown: number; grounded: number } | null
 }) {
   return (
     <motion.div
@@ -1754,6 +1756,35 @@ function SuggestionsScreen({
             <div className="flex items-center justify-center gap-2.5 rounded-2xl border border-dashed border-white/10 py-5 text-sm text-white/40">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/10 border-t-primary" />
               <span>AI підбирає ще варіанти…</span>
+            </div>
+          )}
+          {!loading && thin && (
+            <div className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] p-4">
+              <p className="text-sm font-medium text-amber-300">
+                {thin.grounded === 0
+                  ? "За цими параметрами на ринку ЄС зараз немає готових авто, наявність яких ми можемо гарантувати."
+                  : "За цими параметрами на ринку зараз небагато готових авто."}
+              </p>
+              <p className="mt-1 text-sm text-white/55">
+                {thin.grounded === 0
+                  ? "Варіанти нижче — найближче за змістом, але їхня наявність прямо зараз не гарантована. Підберемо саме під ваш запит вручну й привеземо під замовлення."
+                  : "Показані варіанти — перевірені, реально є в наявності. Хочете ширший вибір цього класу — підберемо додатково під замовлення під ваш бюджет."}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <a
+                  href="/contacts"
+                  className="flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-500/[0.1] px-4 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-500/[0.18] transition-all"
+                >
+                  Підібрати під замовлення
+                </a>
+                <button
+                  onClick={onBack}
+                  className="flex items-center gap-1.5 rounded-xl border border-border bg-card px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:border-primary/30 transition-all cursor-pointer"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  Розширити критерії
+                </button>
+              </div>
             </div>
           )}
           {!loading && suggestions.length > 0 && approvedIndices.size === 0 && (
@@ -2294,6 +2325,9 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
   const [error, setError] = useState<string | null>(null)
   const [aiUnavailable, setAiUnavailable] = useState(false)
   const [userBudget, setUserBudget] = useState<{ min?: number; max?: number }>({})
+  // T5: set when the suggest stream reports a thin segment (<3 grounded picks) —
+  // drives the honest "few real matches → under-order" banner.
+  const [thinInfo, setThinInfo] = useState<{ shown: number; grounded: number } | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   const updateAnswer = useCallback((idx: number, ans: Answer) => {
@@ -2304,6 +2338,7 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
   const fetchSuggestions = useCallback(async (finalAnswers: Answer[]) => {
     setPhase("suggestions")
     setLoadingSuggestions(true)
+    setThinInfo(null)
     try {
       // Build preferences from answers
       const byId = Object.fromEntries(finalAnswers.map(a => [a.questionId, a]))
@@ -2574,6 +2609,11 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
               }
               streamDone = true
               break
+            } else if (event.type === "thin") {
+              // T5: server gated out un-findable picks and couldn't fully ground
+              // this request — remember it so the UI can be honest about a thin
+              // segment and offer the under-order offramp. Arrives before "done".
+              setThinInfo({ shown: event.shown ?? 0, grounded: event.grounded ?? 0 })
             } else if (event.type === "done") {
               setLoadingSuggestions(false)
               streamDone = true
@@ -2899,6 +2939,7 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
             approvedIndices={approvedIndices}
             searchingIndex={searchingIndex}
             error={error}
+            thin={thinInfo}
           />
         </div>
       )}
