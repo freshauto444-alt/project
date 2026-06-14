@@ -2078,6 +2078,13 @@ ${hasNoCars
   // answer conversationally — it already has the shown cars in carsContext.
   const detailIntent = /про це авто|про цю машин|про цей варіант|про це\b|про нього|про неї|детальн|докладн|комплектац|характеристик|сервісн|що включ|що по цьому|більше про це/i.test(lastUserMsg)
 
+  // "Why so few / why one result" is a QUESTION to answer, not a command to
+  // re-search. It used to fall through to Claude, which returned TRIGGER_SEARCH
+  // → a fresh, context-less parse dumped 67 random cars of every make. Treat
+  // these like detailIntent: explain, never silently re-search.
+  const questionIntent = /(^|[\s,])(чому|чого|чом|навіщо|нащо|why)([\s,?]|$)/i.test(lastUserMsg)
+    || /чому (так|лише|тільки|мало|один|стільки|небагато)/i.test(lastUserMsg)
+
   // When the client names a NEW make/model while a prior search context already
   // exists, don't instantly re-search with the old parameters. Route to Claude
   // so it can first state the current params (budget/years/model) and ask whether
@@ -2100,7 +2107,7 @@ ${hasNoCars
   )
   const wantsNewCarConfirm = mentionsBrand && hasExistingParams && !detailIntent
 
-  const isDirectSearch = !detailIntent && !wantsNewCarConfirm && searchKeywords.some(k => lastUserMsg.includes(k))
+  const isDirectSearch = !detailIntent && !questionIntent && !wantsNewCarConfirm && searchKeywords.some(k => lastUserMsg.includes(k))
 
   if (isDirectSearch) {
     return NextResponse.json({
@@ -2117,6 +2124,16 @@ ${hasNoCars
   const reply = await callClaude(systemPrompt, messages as ChatMessage[], 700)
 
   if (!reply || reply.includes("TRIGGER_SEARCH")) {
+    // A detail/why question must never trigger a fresh (context-less) search even
+    // if Claude misfires TRIGGER_SEARCH — answer instead of dumping random cars.
+    if (detailIntent || questionIntent) {
+      return NextResponse.json({
+        message: "Зараз поясню. Якщо варіантів мало — це зазвичай вузький рік/бюджет або рідкісна модель. Можу розширити роки чи діапазон ціни, взяти ближчу масовішу модель, або поставити на моніторинг — що зробити?",
+        searching: false,
+        clientOrderId: clientOrderId ?? crypto.randomUUID(),
+        chatPreferences: chatPreferences ?? null,
+      })
+    }
     return NextResponse.json({
       message: "Зараз гляну що є за вашими критеріями.",
       searching: true,
