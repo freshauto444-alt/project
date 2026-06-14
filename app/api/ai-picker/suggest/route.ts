@@ -51,43 +51,57 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
       process.env.SUPABASE_SERVICE_KEY!,
     )
 
+    // Build a REAL candidate menu from our own parse history. NOTE: parsed
+    // market cars are stored with status "Available" (not "In Stock") — the old
+    // `eq("status","In Stock")` matched ~0 rows, so the AI got no grounding and
+    // suggested purely from memory. Pull recent rows matching the client's
+    // params; freshest first.
     let query = supabase
       .from("cars")
-      .select("make, model, year, price, body_type, fuel, transmission")
-      .eq("status", "In Stock")
-      .limit(40)
+      .select("make, model, year, price, body_type, fuel")
+      .neq("status", "Sold")
+      .order("parsed_at", { ascending: false })
+      .limit(300)
 
     if (prefs.budget_min) query = query.gte("price", Math.round(prefs.budget_min / 1.38 - 4500))
     if (prefs.budget_max) query = query.lte("price", Math.round(prefs.budget_max / 1.38 - 3000))
     if (prefs.year_from)  query = query.gte("year", prefs.year_from)
     if (prefs.year_to)    query = query.lte("year", prefs.year_to)
     if (prefs.fuel)       query = query.ilike("fuel", `%${prefs.fuel}%`)
+    // Body/segment — match the client's chosen kuzov when set (else purpose kuzovs).
+    const bodyFilter = prefs.body_type
+      ? [prefs.body_type]
+      : (prefs.purpose_body_types ?? [])
+    if (bodyFilter.length === 1) query = query.ilike("body_type", `%${bodyFilter[0]}%`)
+    else if (bodyFilter.length > 1) query = query.in("body_type", bodyFilter)
 
     const { data } = await query
     if (!data || data.length === 0) return ""
 
-    // Summarise: group by make+model, show year range and price range
-    const grouped = new Map<string, { years: number[]; prices: number[]; body: string }>()
+    // Group by make+model → count, year range, turnkey price range. Rank by
+    // count (most-available models are the safest, most-findable candidates).
+    const grouped = new Map<string, { years: number[]; prices: number[]; body: string; n: number }>()
     for (const c of data) {
       const key = `${c.make} ${c.model}`
-      const entry = grouped.get(key) ?? { years: [] as number[], prices: [] as number[], body: c.body_type ?? "" }
+      const entry = grouped.get(key) ?? { years: [] as number[], prices: [] as number[], body: c.body_type ?? "", n: 0 }
+      entry.n++
       if (c.year)  entry.years.push(Number(c.year))
       if (c.price) entry.prices.push(Number(c.price))
       grouped.set(key, entry)
     }
 
-    const lines: string[] = []
-    for (const [name, { years, prices, body }] of grouped) {
-      const yearStr = years.length
-        ? `${Math.min(...years)}-${Math.max(...years)}`
+    const ranked = [...grouped.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 25)
+    const lines = ranked.map(([name, { years, prices, body, n }]) => {
+      const yearStr = years.length ? `${Math.min(...years)}-${Math.max(...years)}` : "?"
+      // Convert EU price → turnkey so the menu speaks the client's language.
+      const tk = prices.map(p => Math.round(p * 1.38 + 4500))
+      const priceStr = tk.length
+        ? `€${Math.min(...tk).toLocaleString()}-€${Math.max(...tk).toLocaleString()} під ключ`
         : "?"
-      const priceStr = prices.length
-        ? `€${Math.min(...prices).toLocaleString()}-€${Math.max(...prices).toLocaleString()} EU`
-        : "?"
-      lines.push(`• ${name} (${yearStr}, ${priceStr}${body ? ", " + body : ""})`)
-    }
+      return `• ${name} — ${n} шт, ${yearStr}, ${priceStr}${body ? ", " + body : ""}`
+    })
 
-    return `НАЯВНІСТЬ У СТОЦІ (реальні авто, що зараз є):\n${lines.join("\n")}`
+    return `РЕАЛЬНЕ МЕНЮ КАНДИДАТІВ (це фактично спарсені авто, що ЗАРАЗ є на ринку ЄС за параметрами клієнта; "шт" = скільки в наявності):\n${lines.join("\n")}`
   } catch {
     return ""
   }
@@ -490,7 +504,13 @@ model_search = назва моделі lowercase, БЕЗ префіксу мар
 
   const inventoryContext = await inventoryContextPromise
   const inventoryBlock = inventoryContext
-    ? `\n\n${inventoryContext}\n\nВикористай ці дані як підказку — якщо наявні авто відповідають запиту клієнта, рекомендуй їх першими.`
+    ? `\n\n${inventoryContext}
+
+ЯК КОРИСТУВАТИСЯ МЕНЮ КАНДИДАТІВ (важливо):
+• Це ФАКТИЧНО наявні зараз авто за параметрами клієнта — не вигадані. ПРІОРИТЕТНО обирай пропозиції З ЦЬОГО МЕНЮ: так клієнт точно знайде те, що ти порадиш.
+• Моделі з більшою кількістю "шт" — надійніший вибір (реально є з чого вибрати). Ціни/роки в меню РЕАЛЬНІ — звіряй з ними свій priceRange замість оцінок з памʼяті.
+• Можеш додати 1 пропозицію ПОЗА меню ТІЛЬКИ якщо вона явно краще пасує запиту і ти впевнений, що вона є на ринку ЄС у цьому бюджеті. Решта — з меню.
+• Якщо меню тонке/порожнє (рідкісний сегмент) — тоді користуйся знаннями ринку як зазвичай, але чесно.`
     : ""
 
   // When budget is missing, DO NOT force a synthetic 20-40k EUR range — that
