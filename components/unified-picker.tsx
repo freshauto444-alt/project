@@ -1684,7 +1684,7 @@ function SuggestionsScreen({
   approvedIndices: Set<number>
   searchingIndex: number | null
   error: string | null
-  thin: { shown: number; grounded: number } | null
+  thin: { reason?: string; shown: number } | null
 }) {
   return (
     <motion.div
@@ -1761,14 +1761,10 @@ function SuggestionsScreen({
           {!loading && thin && (
             <div className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] p-4">
               <p className="text-sm font-medium text-amber-300">
-                {thin.grounded === 0
-                  ? "За цими параметрами на ринку ЄС зараз немає готових авто, наявність яких ми можемо гарантувати."
-                  : "За цими параметрами на ринку зараз небагато готових авто."}
+                Саме таких авто у вказаному бюджеті зараз обмаль.
               </p>
               <p className="mt-1 text-sm text-white/55">
-                {thin.grounded === 0
-                  ? "Варіанти нижче — найближче за змістом, але їхня наявність прямо зараз не гарантована. Підберемо саме під ваш запит вручну й привеземо під замовлення."
-                  : "Показані варіанти — перевірені, реально є в наявності. Хочете ширший вибір цього класу — підберемо додатково під замовлення під ваш бюджет."}
+                Показані варіанти трохи дорожчі за вашу суму — це чесні ринкові ціни. Можемо підібрати під замовлення під ваш бюджет або трохи розширте суму, і виборів стане більше.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <a
@@ -2325,9 +2321,10 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
   const [error, setError] = useState<string | null>(null)
   const [aiUnavailable, setAiUnavailable] = useState(false)
   const [userBudget, setUserBudget] = useState<{ min?: number; max?: number }>({})
-  // T5: set when the suggest stream reports a thin segment (<3 grounded picks) —
-  // drives the honest "few real matches → under-order" banner.
-  const [thinInfo, setThinInfo] = useState<{ shown: number; grounded: number } | null>(null)
+  // Set when the suggest stream reports the request is infeasible at the given
+  // budget (every pick over budget) — drives the honest "over budget → under-
+  // order / widen" banner. NOT triggered by thin parse-history coverage anymore.
+  const [thinInfo, setThinInfo] = useState<{ reason?: string; shown: number } | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   // T9 learning loop: one session id per picker mount + fire-and-forget event
   // logging. Never awaited, never throws — telemetry must not affect the UX.
@@ -2624,10 +2621,10 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
               streamDone = true
               break
             } else if (event.type === "thin") {
-              // T5: server gated out un-findable picks and couldn't fully ground
-              // this request — remember it so the UI can be honest about a thin
-              // segment and offer the under-order offramp. Arrives before "done".
-              setThinInfo({ shown: event.shown ?? 0, grounded: event.grounded ?? 0 })
+              // Request is infeasible at this budget (all picks over budget) —
+              // show the honest "over budget → under-order / widen" note. Arrives
+              // before "done".
+              setThinInfo({ reason: event.reason, shown: event.shown ?? 0 })
               thinShown = true
             } else if (event.type === "done") {
               setLoadingSuggestions(false)

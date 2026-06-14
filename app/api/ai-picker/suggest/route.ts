@@ -746,17 +746,15 @@ ${hasBudget
         let lineBuf = ""
         let textAccum = ""
         let sentCount = 0
-        // T4 pre-flight gate: only stream picks that are grounded in real
-        // inventory (the menu is already budget/year/body-filtered, so grounded
-        // ⇒ findable now). Ungrounded picks — e.g. a sporty Cayman we don't have
-        // in this budget — almost always return 0, so hold them back and release
-        // only as a last resort (if NOTHING grounds) so the UI is never blank.
-        // Disabled when there's no menu at all (size 0) → old behavior.
-        const gateOn = inventoryKeys.size > 0
-        let groundedSent = 0 // grounded picks actually shown (drives the `thin` signal)
-        const heldUngrounded: object[] = []
+        let overCount = 0 // picks the AI itself flagged as over the client's budget
+        // `grounded` is now a SOFT LABEL, not a gate. Our parse-history is an
+        // incomplete sample of the EU market, so "not in our pool" does NOT mean
+        // "not on the market" — gating on it produced false "thin" banners and
+        // single-suggestion results for common segments (e.g. sporty €60k). We
+        // show all 3 picks and only flag genuine infeasibility (all over budget).
+        const hasMenu = inventoryKeys.size > 0
         const isGroundedSugg = (rawSugg: any): boolean =>
-          gateOn && inventoryKeys.has(groundingKey(rawSugg.make, rawSugg.model_display ?? rawSugg.model_search ?? rawSugg.model ?? ""))
+          hasMenu && inventoryKeys.has(groundingKey(rawSugg.make, rawSugg.model_display ?? rawSugg.model_search ?? rawSugg.model ?? ""))
 
         while (true) {
           const { done, value } = await reader.read()
@@ -786,16 +784,12 @@ ${hasBudget
                 for (const rawSugg of complete) {
                   if (sentCount >= 3) break
                   if (rawSugg && typeof rawSugg === "object" && rawSugg.make) {
-                    const mapped = mapRawSuggestion(rawSugg, prefs)
+                    const mapped: any = mapRawSuggestion(rawSugg, prefs)
                     if (!isUsableSuggestion(mapped)) continue // skip un-parseable (bad years / not-in-EU brand)
                     const grounded = isGroundedSugg(rawSugg)
-                    if (gateOn && !grounded) {
-                      if (heldUngrounded.length < 3) heldUngrounded.push({ ...mapped, grounded: false })
-                      continue // T4: don't show a pick with no matching inventory
-                    }
-                    controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: { ...mapped, grounded: gateOn ? true : undefined } }))
+                    controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: { ...mapped, grounded: hasMenu ? grounded : undefined } }))
                     sentCount++
-                    if (gateOn) groundedSent++
+                    if (mapped.budgetFit === "over") overCount++
                   }
                 }
               }
@@ -808,37 +802,26 @@ ${hasBudget
                     const match = cleaned.match(/\{[\s\S]*\}/)
                     if (match) {
                       const rawSugg = JSON.parse(match[0])
-                      const mapped2 = rawSugg?.make ? mapRawSuggestion(rawSugg, prefs) : null
+                      const mapped2: any = rawSugg?.make ? mapRawSuggestion(rawSugg, prefs) : null
                       if (mapped2 && sentCount < 3 && isUsableSuggestion(mapped2)) {
                         const grounded = isGroundedSugg(rawSugg)
-                        if (gateOn && !grounded) {
-                          if (heldUngrounded.length < 3) heldUngrounded.push({ ...mapped2, grounded: false })
-                        } else {
-                          controller.enqueue(sseEvent(encoder, {
-                            type: "suggestion",
-                            suggestion: { ...mapped2, grounded: gateOn ? true : undefined },
-                          }))
-                          sentCount++
-                          if (gateOn) groundedSent++
-                        }
+                        controller.enqueue(sseEvent(encoder, {
+                          type: "suggestion",
+                          suggestion: { ...mapped2, grounded: hasMenu ? grounded : undefined },
+                        }))
+                        sentCount++
+                        if (mapped2.budgetFit === "over") overCount++
                       }
                     }
                   } catch { /* incomplete JSON, ignore */ }
                 }
-                // T4: grounded gate left us with nothing → release best-effort
-                // held picks so the UI isn't blank (these may not be on the
-                // market right now — the `thin` notice flags that to the client).
-                if (gateOn && sentCount === 0 && heldUngrounded.length > 0) {
-                  for (const s of heldUngrounded.slice(0, 3)) {
-                    controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: s }))
-                    sentCount++
-                  }
-                }
-                if (gateOn && groundedSent < 3) {
-                  // Fewer than 3 GROUNDED picks for this request — this segment is
-                  // thin on the market (any cards shown beyond groundedSent are
-                  // best-effort, possibly not on the market). T5 → honest CTA.
-                  controller.enqueue(sseEvent(encoder, { type: "thin", shown: sentCount, grounded: groundedSent }))
+                // Honest scarcity ONLY when the request is genuinely infeasible at
+                // this price — client gave a budget and EVERY pick the AI could
+                // offer is over it (e.g. "Urus за €50k"). NOT when our parse-history
+                // pool is merely thin: that's an incomplete sample, and a common
+                // segment (sporty €60k) has plenty of market options.
+                if (hasBudget && sentCount > 0 && overCount === sentCount) {
+                  controller.enqueue(sseEvent(encoder, { type: "thin", reason: "over_budget", shown: sentCount }))
                 }
                 controller.enqueue(sseEvent(encoder, { type: "done" }))
               }
