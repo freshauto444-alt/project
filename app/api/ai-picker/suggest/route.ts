@@ -144,26 +144,34 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
     // Build a REAL candidate menu from our own parse history. NOTE: parsed
     // market cars are stored with status "Available" (not "In Stock") — the old
     // `eq("status","In Stock")` matched ~0 rows, so the AI got no grounding and
-    // suggested purely from memory. Pull recent rows matching the client's
-    // params; freshest first.
+    // suggested purely from memory.
+    // Sample broadly (1200, not 300): at 300-most-recent a single bulk harvest
+    // (e.g. a recent Audi sweep) dominated the pool and the menu came back
+    // mono-brand, while genuinely common models fell off and read as ungrounded.
     let query = supabase
       .from("cars")
       .select("make, model, year, price, body_type, fuel")
       .neq("status", "Sold")
       .order("parsed_at", { ascending: false })
-      .limit(300)
+      .limit(1200)
 
     if (prefs.budget_min) query = query.gte("price", Math.round(prefs.budget_min / 1.38 - 4500))
     if (prefs.budget_max) query = query.lte("price", Math.round(prefs.budget_max / 1.38 - 3000))
     if (prefs.year_from)  query = query.gte("year", prefs.year_from)
     if (prefs.year_to)    query = query.lte("year", prefs.year_to)
     if (prefs.fuel)       query = query.ilike("fuel", `%${prefs.fuel}%`)
-    // Body/segment — match the client's chosen kuzov when set (else purpose kuzovs).
+    // Body/segment — match the client's chosen kuzov when set (else purpose
+    // kuzovs). Crucially INCLUDE Unknown/NULL body cars: many real SUVs (e.g.
+    // SQ5) come back body_type "Unknown", and hard-excluding them emptied the
+    // body-filtered pool (the "0 SUV" symptom). Model name still lets the AI judge.
     const bodyFilter = prefs.body_type
       ? [prefs.body_type]
       : (prefs.purpose_body_types ?? [])
-    if (bodyFilter.length === 1) query = query.ilike("body_type", `%${bodyFilter[0]}%`)
-    else if (bodyFilter.length > 1) query = query.in("body_type", bodyFilter)
+    if (bodyFilter.length > 0) {
+      const ors = bodyFilter.map(b => `body_type.ilike.%${b}%`)
+      ors.push("body_type.is.null", "body_type.eq.Unknown")
+      query = query.or(ors.join(","))
+    }
 
     const { data } = await query
     if (!data || data.length === 0) return empty
