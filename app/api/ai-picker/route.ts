@@ -1073,7 +1073,11 @@ async function triggerParser(
     budgetMin = Math.max(0, chat.budget - margin)
     budgetMax = chat.budget + margin
   }
-  if (budgetMin != null) budgetMin = Math.max(budgetMin, MIN_BUDGET)
+  // Always enforce the turnkey floor, even when the client gave NO budget (e.g.
+  // "Шукати за всіма параметрами"): Fresh Auto deals only in cars ≥ MIN_BUDGET
+  // turnkey, so a no-budget search must still exclude cheap utility vehicles
+  // (Fiat Doblo, vans) instead of surfacing them.
+  budgetMin = Math.max(budgetMin ?? 0, MIN_BUDGET)
 
   // User's budget is "turnkey" (final price inc. duty+excise+VAT+delivery).
   // Parser filters by raw EU source price, so reverse-calculate the EU ceiling/floor.
@@ -1401,6 +1405,19 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
     filtered = filtered.filter(c => {
       if (!c.seats) return true // keep if unknown
       return c.seats >= prefs.seats_min!
+    })
+  }
+
+  // Explicit body type — HARD filter (keep unknowns, like every other filter).
+  // Blocket doesn't body-filter server-side and the parser body filter covers
+  // only some sources, so vans/campers (VW California=Bus, Fiat Doblo=Van) leaked
+  // into a "Sedan"/"SUV" search. Drop cars whose KNOWN body doesn't match.
+  if (prefs.body_type) {
+    const want = prefs.body_type.toLowerCase()
+    filtered = filtered.filter(c => {
+      const cb = (c.body_type ?? c.bodyType ?? "").toLowerCase()
+      if (!cb || cb === "unknown" || cb === "other") return true
+      return cb.includes(want) || want.includes(cb)
     })
   }
 
