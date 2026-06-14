@@ -2725,9 +2725,13 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
             pairs: [{ make: suggestion.searchParams.make, model: suggestion.searchParams.model }],
             fuel: suggestion.searchParams.fuel ?? null,
             body_type: suggestion.searchParams.body_type ?? null,
-            // Use USER's budget from questionnaire, not Claude's price estimate
-            budget_min: userBudget.min || suggestion.searchParams.budget_min || 20000,
-            budget_max: userBudget.max || suggestion.searchParams.budget_max || undefined,
+            // Use the USER's budget from the questionnaire. When they gave NONE,
+            // do NOT fall back to Claude's price ESTIMATE as a hard filter — an
+            // inflated estimate (e.g. X5 M quoted 180-210k) silently excludes
+            // cheaper real listings (AS24 had 34 at 95-120k EU, we returned 3).
+            // Search the full market for the picked model down to the 20k floor.
+            budget_min: userBudget.min || 20000,
+            budget_max: userBudget.max || undefined,
             // Year filter precedence: explicit form value > AI's yearRange.
             // Passing AI's yearRange to the parser lets AutoScout24 (fregfrom)
             // and mobile.de (minFirstRegistrationDate) filter at the source —
