@@ -1318,19 +1318,32 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
     })
   }
 
-  // Engine displacement
+  // Engine displacement — prefer the structured engine_cc (cc→L) when present,
+  // else parse the engine display string. Robust to EU comma decimals: the old
+  // /[1-9]\.\d+/ required a DOT, so "2,0 TDI" (common on Swedish/German ads) never
+  // matched → liters stayed null → the car bypassed the filter (a silent leak).
   if (prefs.displacement_min != null || prefs.displacement_max != null) {
     filtered = filtered.filter(c => {
-      const eng: string = (c.engine ?? "").toLowerCase()
-      // Extract displacement: "2.0 Diesel" → 2.0, "1.5L" → 1.5, "1998 ccm" → 2.0
       let liters: number | null = null
-      const mDot = eng.match(/\b([1-9]\.\d+)\b/)
-      if (mDot) liters = parseFloat(mDot[1])
-      if (liters === null) {
-        const mCc = eng.match(/(\d{3,4})\s*(?:cc|ccm)/i)
-        if (mCc) liters = Math.round(parseInt(mCc[1]) / 100) / 10
+      const cc = Number(c.engine_cc ?? c.engineCc)
+      if (Number.isFinite(cc) && cc > 600) {
+        liters = Math.round(cc / 100) / 10 // authoritative when present
+      } else {
+        const eng: string = (c.engine ?? "").toLowerCase()
+        const mDec = eng.match(/\b([1-9])[.,](\d)(?!\d)/)    // "2.0", "2,0", "1.5L"
+        if (mDec) liters = parseFloat(`${mDec[1]}.${mDec[2]}`)
+        if (liters === null) {
+          const mCc = eng.match(/(\d{3,4})\s*(?:cc|ccm)\b/i)  // "1998 ccm"
+          if (mCc) liters = Math.round(parseInt(mCc[1]) / 100) / 10
+        }
+        if (liters === null) {
+          // bare-integer liters "2L"/"2 л" — lookbehind stops it grabbing a digit
+          // that's part of a decimal ("1.5l" is handled by mDec above).
+          const mL = eng.match(/(?<![.,\d])([1-9])\s*(?:l|л|liter|litre)\b/i)
+          if (mL) liters = parseInt(mL[1])
+        }
       }
-      if (liters === null) return true // keep if unknown
+      if (liters === null) return true // unknown → keep (soft, like every filter)
       if (prefs.displacement_min != null && liters < prefs.displacement_min) return false
       if (prefs.displacement_max != null && liters > prefs.displacement_max) return false
       return true
@@ -1419,7 +1432,12 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
     })
   }
 
-  // Required options
+  // Required options — match across feature lists AND the description, with
+  // EN→UA/SE/DE synonyms. The option keys are English ("leather", "panorama"…)
+  // but features_ua/descriptions come back in Ukrainian/Swedish/German, so a raw
+  // includes() matched almost nothing → cars with features were hard-dropped
+  // (over-filter leak). Cars with NO verifiable data at all are kept (soft, like
+  // every other filter), instead of being silently dropped.
   if (prefs.required_options.length > 0) {
     filtered = filtered.filter(c => {
       const allFeatures = [
@@ -1428,15 +1446,33 @@ function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[] {
         ...(c.infotainment ?? []),
         ...(c.features_ua ?? []),
       ].map((f: string) => f.toLowerCase())
+      const desc = `${c.description ?? ""} ${c.title_line ?? ""}`.toLowerCase()
+      // Nothing to verify against → keep (can't confirm, don't drop).
+      if (allFeatures.length === 0 && !desc.trim()) return true
 
+      const hay = allFeatures.join(" · ") + " · " + desc
       return prefs.required_options.every(opt => {
-        const optLower = opt.toLowerCase()
-        return allFeatures.some(f => f.includes(optLower))
+        const syns = OPTION_SYNONYMS[opt.toLowerCase()] ?? [opt.toLowerCase()]
+        return syns.some(s => hay.includes(s))
       })
     })
   }
 
   return filtered
+}
+
+// EN option key → substrings to look for across UA features + SE/DE descriptions
+// (sources are Swedish/German). Keeps the leaky required_options filter actually
+// functional. Substrings are stems so "panoram" hits panorama/panoramatak/панорам.
+const OPTION_SYNONYMS: Record<string, string[]> = {
+  "leather":      ["leather", "шкір", "läder", "leder", "skinn"],
+  "panorama":     ["panorama", "панорам", "panoramatak", "glastak", "glasdach", "glasdak"],
+  "carplay":      ["carplay", "car play", "apple car", "android auto", "smartphone integration"],
+  "navigation":   ["navigation", "navi", "навігац", "gps", "satnav", "mmi navi"],
+  "camera":       ["camera", "kamera", "камер", "backkamera", "rückfahrkamera", "360"],
+  "heated seats": ["heated seat", "stolvärme", "värmestol", "sitzheizung", "підігрів сид", "sätesvärme"],
+  "navigation system": ["navigation", "navi", "навігац", "gps", "satnav"],
+  "heated seat":  ["heated seat", "stolvärme", "värmestol", "sitzheizung", "підігрів сид"],
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
