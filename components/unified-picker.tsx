@@ -2329,6 +2329,19 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
   // drives the honest "few real matches → under-order" banner.
   const [thinInfo, setThinInfo] = useState<{ shown: number; grounded: number } | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  // T9 learning loop: one session id per picker mount + fire-and-forget event
+  // logging. Never awaited, never throws — telemetry must not affect the UX.
+  const sessionIdRef = useRef<string>(makeUuid())
+  const logPickerEvent = useCallback((kind: string, extra: Record<string, unknown>) => {
+    try {
+      fetch("/api/ai-picker/event", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        keepalive: true,
+        body: JSON.stringify({ kind, session_id: sessionIdRef.current, ...extra }),
+      }).catch(() => {})
+    } catch { /* ignore */ }
+  }, [])
 
   const updateAnswer = useCallback((idx: number, ans: Answer) => {
     setAnswers(prev => prev.map((a, i) => (i === idx ? ans : a)))
@@ -2641,6 +2654,17 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
   const handleApproveSuggestion = useCallback(async (idx: number) => {
     const suggestion = suggestions[idx]
     if (!suggestion) return
+
+    // T9: strongest learning signal — the user picked THIS model. Biases future
+    // suggestions (read back in /suggest). Fire-and-forget.
+    logPickerEvent("suggestion_approved", {
+      make: suggestion.make,
+      model: suggestion.model,
+      body_type: suggestion.searchParams?.body_type ?? null,
+      budget_min: suggestion.searchParams?.budget_min ?? null,
+      budget_max: suggestion.searchParams?.budget_max ?? null,
+      meta: { yearRange: suggestion.yearRange, grounded: (suggestion as any).grounded ?? null },
+    })
 
     // Cancel any in-flight approval/search before starting a new one. Without this,
     // tapping a second card while the first parser call is still running causes the

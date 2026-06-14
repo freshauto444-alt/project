@@ -199,6 +199,42 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
   }
 }
 
+// T9 learning loop: which models clients actually picked recently → a gentle
+// popularity signal for the AI. Reads picker_events (kind=suggestion_approved),
+// last 30 days. Fully defensive: returns "" if the table is absent or empty, so
+// the picker behaves exactly as before until signals accumulate.
+async function fetchPopularModels(): Promise<string> {
+  try {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const key = process.env.SUPABASE_SERVICE_KEY
+    if (!url || !key) return ""
+    const supabase = createClient(url, key)
+    const since = new Date(Date.now() - 30 * 864e5).toISOString()
+    const { data } = await supabase
+      .from("picker_events")
+      .select("make, model")
+      .eq("kind", "suggestion_approved")
+      .gte("ts", since)
+      .limit(2000)
+    if (!data || data.length === 0) return ""
+
+    const counts = new Map<string, number>()
+    for (const e of data) {
+      if (!e.make || !e.model) continue
+      const k = `${String(e.make).trim()} ${String(e.model).trim()}`
+      counts.set(k, (counts.get(k) ?? 0) + 1)
+    }
+    const top = [...counts.entries()]
+      .filter(([, c]) => c >= 2) // ignore one-offs (noise)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+    if (top.length === 0) return ""
+    return `ПОПУЛЯРНЕ В НАШИХ КЛІЄНТІВ (найчастіше обирають за останній місяць — хороший орієнтир за інших рівних, але НЕ нав'язуй усупереч параметрам клієнта): ${top.map(([k, c]) => `${k} (×${c})`).join(", ")}`
+  } catch {
+    return ""
+  }
+}
+
 // ── Streaming JSON suggestion parser ─────────────────────────────────────────
 // Parses complete JSON objects from a streaming buffer like "[{...},{...},..."
 // Returns completed objects and the remaining unparsed buffer.
@@ -593,10 +629,12 @@ model_search = назва моделі lowercase, БЕЗ префіксу мар
 • Слова на кшталт "свіжа/нова/freshe" = пріоритет на роки 2022-2025 у межах бюджету.`
     : ""
 
-  // Fetch inventory context in parallel with prompt building (non-blocking)
+  // Fetch inventory context + popularity signal in parallel with prompt building
   const inventoryContextPromise = fetchInventoryContext(prefs)
+  const popularPromise = fetchPopularModels()
 
   const { text: inventoryContext, keys: inventoryKeys } = await inventoryContextPromise
+  const popularBlock = await popularPromise
   const inventoryBlock = inventoryContext
     ? `\n\n${inventoryContext}
 
@@ -620,6 +658,7 @@ model_search = назва моделі lowercase, БЕЗ префіксу мар
     `Параметри клієнта:\n${prefsBlock}` +
     freeTextBlock +
     inventoryBlock +
+    (popularBlock ? `\n\n${popularBlock}` : "") +
     `\n\nВАЖЛИВО ПРО ЦІНИ:
 • Бюджет клієнта — у TURNKEY (фінал в Україні).
 • Формула: turnkey = EU × 1.38 + 4500 (мито+акциз+ПДВ+комісія+доставка+реєстрація).

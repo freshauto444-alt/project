@@ -177,3 +177,34 @@ CREATE POLICY "Users manage own saved cars" ON public.saved_cars FOR ALL USING (
 
 -- LEADS
 CREATE POLICY "Admin manage leads" ON public.leads FOR ALL USING (public.is_admin_or_manager());
+
+-- ============================================================
+-- 6. PICKER EVENTS — AI-picker learning loop (T9) + observability (T10)
+-- ============================================================
+-- Append-only event log written server-side via the service key (bypasses RLS).
+-- T9 reads kind='suggestion_approved' to bias future suggestions toward what
+-- clients actually pick; T10 reads the other kinds for hit-rate / thin-rate /
+-- conversion metrics. Safe to query before any rows exist.
+CREATE TABLE IF NOT EXISTS public.picker_events (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  ts TIMESTAMPTZ DEFAULT now(),
+  kind TEXT NOT NULL,            -- suggestions_shown | suggestion_approved | search_completed | car_clicked
+  session_id TEXT,              -- client-generated; ties one user's flow together
+  make TEXT,
+  model TEXT,                   -- base model where relevant
+  body_type TEXT,
+  budget_min INT,
+  budget_max INT,
+  grounded INT,                 -- suggestions_shown: grounded count
+  shown INT,                    -- suggestions_shown: total cards shown
+  found INT,                    -- search_completed: result count
+  meta JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_picker_events_kind_ts ON public.picker_events(kind, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_picker_events_make_model ON public.picker_events(make, model);
+
+ALTER TABLE public.picker_events ENABLE ROW LEVEL SECURITY;
+-- No public/anon policy: inserts go through the server (service key). Only
+-- admins/managers can read the raw event stream.
+CREATE POLICY "Admin read picker events" ON public.picker_events FOR SELECT USING (public.is_admin_or_manager());
