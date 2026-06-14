@@ -2711,6 +2711,27 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
     const formYearFrom = byId.year?.selected[0] ? parseInt(byId.year.selected[0]) : null
     const formYearTo = byId.year?.selected[1] ? parseInt(byId.year.selected[1]) : null
 
+    // Approve search budget. If the user gave their OWN budget → use it strictly.
+    // Otherwise fall back to the AI's proposed priceRange, widened by a tiered
+    // tolerance that scales with the price level (so the band isn't artificially
+    // tight on pricey cars): <50k fixed, 50-100k ±5k, 100-200k ±10k, 200k+ ±20k.
+    // Tier is keyed off the range's upper bound. The 20k turnkey floor always holds.
+    const hasUserBudget = userBudget.min != null || userBudget.max != null
+    let searchBudgetMin = 20000
+    let searchBudgetMax: number | undefined = undefined
+    if (hasUserBudget) {
+      searchBudgetMin = userBudget.min || 20000
+      searchBudgetMax = userBudget.max || undefined
+    } else {
+      const aiMin = suggestion.searchParams.budget_min
+      const aiMax = suggestion.searchParams.budget_max
+      if (typeof aiMin === "number" && typeof aiMax === "number") {
+        const tol = aiMax < 50000 ? 0 : aiMax < 100000 ? 5000 : aiMax < 200000 ? 10000 : 20000
+        searchBudgetMin = Math.max(20000, aiMin - tol)
+        searchBudgetMax = aiMax + tol
+      }
+    }
+
     try {
       const res = await fetch("/api/ai-picker", {
         method: "POST",
@@ -2725,13 +2746,9 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
             pairs: [{ make: suggestion.searchParams.make, model: suggestion.searchParams.model }],
             fuel: suggestion.searchParams.fuel ?? null,
             body_type: suggestion.searchParams.body_type ?? null,
-            // Use the USER's budget from the questionnaire. When they gave NONE,
-            // do NOT fall back to Claude's price ESTIMATE as a hard filter — an
-            // inflated estimate (e.g. X5 M quoted 180-210k) silently excludes
-            // cheaper real listings (AS24 had 34 at 95-120k EU, we returned 3).
-            // Search the full market for the picked model down to the 20k floor.
-            budget_min: userBudget.min || 20000,
-            budget_max: userBudget.max || undefined,
+            // User's budget if given, else AI range + tiered tolerance (computed above).
+            budget_min: searchBudgetMin,
+            budget_max: searchBudgetMax,
             // Year filter precedence: explicit form value > AI's yearRange.
             // Passing AI's yearRange to the parser lets AutoScout24 (fregfrom)
             // and mobile.de (minFirstRegistrationDate) filter at the source —
