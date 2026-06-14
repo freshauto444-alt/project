@@ -23,6 +23,7 @@ export default function AdminClient() {
   const [leads, setLeads] = useState<any[]>([])
   const [customers, setCustomers] = useState<any[]>([])
   const [managers, setManagers] = useState<any[]>([])
+  const [pickerMetrics, setPickerMetrics] = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
   const fetchData = useCallback(async () => {
@@ -37,6 +38,8 @@ export default function AdminClient() {
     setLeads(leadsRes.data || [])
     setCustomers(customersRes.data || [])
     setManagers(managersRes.data || [])
+    // AI-picker funnel metrics (T10) — best-effort, never blocks the dashboard.
+    fetch("/api/admin/picker-metrics").then(r => r.json()).then(setPickerMetrics).catch(() => {})
     setLoading(false)
   }, [supabase])
 
@@ -347,6 +350,54 @@ export default function AdminClient() {
                     return sum + days
                   }, 0) / Math.max(1, orders.filter(o => o.status === "delivered").length))} днів` : "—"} />
                 </div>
+
+                {/* AI-picker funnel (T10) */}
+                {pickerMetrics?.funnel && (
+                  <div className="rounded-2xl border border-border bg-card p-5">
+                    <h3 className="text-sm font-semibold text-foreground mb-1">AI-підбір — воронка (30 днів)</h3>
+                    <p className="text-[11px] text-muted-foreground mb-4">{pickerMetrics.events} подій · per-source hit-rate див. у парсері (/stats)</p>
+                    <div className="grid grid-cols-3 gap-3 lg:grid-cols-5">
+                      {[
+                        ["Показано", pickerMetrics.funnel.suggestions_shown],
+                        ["Обрано", pickerMetrics.funnel.approved],
+                        ["Пошуків", pickerMetrics.funnel.searches],
+                        ["Знайдено", pickerMetrics.funnel.found_searches],
+                        ["Кліків", pickerMetrics.funnel.cars_clicked],
+                      ].map(([label, val]) => (
+                        <div key={label as string} className="text-center rounded-xl border border-border p-3">
+                          <div className="text-xl font-bold text-foreground">{val as number}</div>
+                          <div className="text-[10px] text-muted-foreground mt-1">{label as string}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5 mt-3">
+                      {[
+                        ["Thin-rate", pickerMetrics.rates_pct.thin_rate, true],
+                        ["Обрали", pickerMetrics.rates_pct.approve_rate, false],
+                        ["0 результатів", pickerMetrics.rates_pct.zero_result_rate, true],
+                        ["Обрав→знайшов", pickerMetrics.rates_pct.approve_to_found, false],
+                        ["Клік на авто", pickerMetrics.rates_pct.click_through, false],
+                      ].map(([label, val, bad]) => (
+                        <div key={label as string} className="text-center rounded-xl border border-border p-3">
+                          <div className={`text-lg font-bold ${(bad as boolean) ? "text-amber-400" : "text-primary"}`}>{val as number}%</div>
+                          <div className="text-[10px] text-muted-foreground mt-1">{label as string}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {pickerMetrics.top_approved?.length > 0 && (
+                      <div className="mt-4">
+                        <p className="text-[11px] text-muted-foreground mb-2">Найчастіше обирають</p>
+                        <div className="flex flex-wrap gap-2">
+                          {pickerMetrics.top_approved.map((t: any) => (
+                            <span key={t.model} className="rounded-lg border border-primary/16 bg-primary/[0.045] px-2.5 py-1 text-[11px] text-primary/80">
+                              {t.model} <span className="text-muted-foreground">×{t.count}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Orders by status */}
                 <div className="rounded-2xl border border-border bg-card p-5">

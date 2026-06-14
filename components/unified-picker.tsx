@@ -2591,6 +2591,7 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
       let lineBuf = ""
       const arrived: Suggestion[] = []
       let streamDone = false
+      let thinShown = false // T10: tracked locally (state setter is async)
 
       while (!streamDone) {
         const { done, value } = await reader.read()
@@ -2627,9 +2628,16 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
               // this request — remember it so the UI can be honest about a thin
               // segment and offer the under-order offramp. Arrives before "done".
               setThinInfo({ shown: event.shown ?? 0, grounded: event.grounded ?? 0 })
+              thinShown = true
             } else if (event.type === "done") {
               setLoadingSuggestions(false)
               streamDone = true
+              // T10: funnel entry — how many shown, how many grounded, was it thin.
+              logPickerEvent("suggestions_shown", {
+                shown: arrived.length,
+                grounded: arrived.filter(s => (s as any).grounded).length,
+                meta: { thin: thinShown },
+              })
               break
             } else if (event.type === "error") {
               setError(event.message || "Помилка AI. Спробуйте ще раз.")
@@ -2752,6 +2760,14 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
       const data = await res.json()
       const newCars = (data.cars ?? []).map(mapApiCar)
 
+      // T10: conversion + 0-result signal — did the approved pick actually find cars?
+      logPickerEvent("search_completed", {
+        make: suggestion.make,
+        model: suggestion.model,
+        found: newCars.length,
+        meta: { via: "approve" },
+      })
+
       // Merge new + old, with three safeguards:
       //   1. New cars go FIRST so the latest pick tops the list.
       //   2. Old cars are kept only if their MAKE matches the new pick.
@@ -2844,7 +2860,9 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
         signal: controller.signal,
       })
       const data = await res.json()
-      setResults((data.cars ?? []).map(mapApiCar))
+      const allCars = (data.cars ?? []).map(mapApiCar)
+      setResults(allCars)
+      logPickerEvent("search_completed", { found: allCars.length, meta: { via: "search_all" } })
       if (data.cars?.length === 0) {
         setError("За вашими параметрами авто поки не знайдено. Спробуйте змінити критерії.")
       }
@@ -2975,7 +2993,15 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
             answers={answers}
             cars={results}
             loading={loadingResults}
-            onSelectCar={onSelectCar}
+            onSelectCar={(car) => {
+              // T10: deepest funnel step — a suggestion led to a car the user opened.
+              logPickerEvent("car_clicked", {
+                make: (car as any).make ?? null,
+                model: (car as any).model ?? null,
+                meta: { id: (car as any).id ?? null },
+              })
+              onSelectCar(car)
+            }}
             onReset={reset}
             onBack={goBackToForm}
             freeText={freeText}
