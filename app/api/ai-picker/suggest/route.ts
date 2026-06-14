@@ -114,7 +114,21 @@ function normMake(make: string): string {
 // primitive — a suggestion whose key is in the real-inventory key set is one we
 // KNOW is findable right now (we just parsed it), so the pick resolves.
 function groundingKey(make: string, model: string): string {
-  return `${normMake(make)}|${baseModelName(make, model).toLowerCase().trim()}`
+  let m = (model || "").trim()
+  // Strip a duplicated leading make the AI sometimes repeats in model_display
+  // ("Kia Sportage" w/ make "Kia" → "Sportage"; "Mercedes GLC" / "Mercedes-Benz
+  // GLC" → "GLC"). Without this the key becomes "kia|kia sportage" and never
+  // matches the pool's "kia|sportage" → a grounded pick reads as ungrounded and
+  // the T4 gate may wrongly drop it. Regex-prefix (not word-array) so it spans
+  // hyphenated makes and preserves the rest of the model verbatim (keeps trims
+  // like "T-GDI" intact).
+  const mkWords = (make || "").toLowerCase().split(/[\s-]+/).filter(Boolean)
+    .map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  if (mkWords.length) {
+    const re = new RegExp(`^(?:(?:${mkWords.join("|")})[\\s-]+)+`, "i")
+    m = m.replace(re, "").trim() || m
+  }
+  return `${normMake(make)}|${baseModelName(make, m).toLowerCase().trim()}`
 }
 
 interface InventoryContext { text: string; keys: Set<string> }
