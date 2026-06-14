@@ -44,6 +44,33 @@ interface SuggestRequest {
 // Gives Claude real data about what's available in stock so suggestions are
 // grounded in actual inventory rather than Claude's general knowledge.
 
+// Collapse a noisy parsed model name to its base model so the candidate menu
+// groups correctly: "GLS 350 d"/"GLS450 d"/"GLS 63 AMG" → "GLS", "Q8 50 TDI" → "Q8",
+// "Cayenne S Diesel" → "Cayenne", "S90 D5 AWD" → "S90". Keeps genuinely-distinct
+// performance models separate (SQ5 ≠ Q5, S5 ≠ A5, RS Q3). Heuristic, validated
+// against real DB data — it's a soft hint to the AI, not a hard identity.
+function baseModelName(make: string, model: string): string {
+  const m = (model || "").trim()
+  if (!m) return model
+  const mk = make.toLowerCase()
+  if (mk.includes("mercedes")) {
+    const cls = m.match(/^(glc|gle|gls|gla|glb|glk|eqa|eqb|eqc|eqe|eqs|cla|cls|amg ?gt|maybach)/i)
+    if (cls) return cls[1].replace(/\s+/g, " ").toUpperCase()
+    const single = m.match(/^([abcegsv])[\s-]?\d{2,3}/i) // "C 220" → "C-Class"
+    if (single) return single[1].toUpperCase() + "-Class"
+  }
+  // Models whose following token is a TRIM, not a separate AS24 group → first word.
+  const trim = m.match(/^(cayenne|macan|panamera|cayman|boxster|taycan|tiguan|touareg|passat|golf|octavia|superb|kodiaq|xc60|xc90|s60|s90|v60|v90)\b/i)
+  if (trim) return trim[1][0].toUpperCase() + trim[1].slice(1).toLowerCase()
+  // Alphanumeric model code that IS its own model — keep ("Q8", "SQ5", "S5", "RS Q3", "X5", "A6").
+  const code = m.match(/^(rs ?q?\d|sq\d|s\d|rs\d|q\d|x\d|[a-z]{1,2}\d{1,3})/i)
+  if (code) return code[1].replace(/\s+/g, " ").toUpperCase()
+  // Fallback: first 1-2 words with standalone engine numbers dropped.
+  const words = m.replace(/\b\d{2,4}\b/g, " ").trim().split(/\s+/).filter(Boolean)
+  const base = words.slice(0, 2).join(" ")
+  return base ? base.replace(/\b\w/g, c => c.toUpperCase()) : m
+}
+
 async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Promise<string> {
   try {
     const supabase = createClient(
@@ -82,7 +109,7 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
     // count (most-available models are the safest, most-findable candidates).
     const grouped = new Map<string, { years: number[]; prices: number[]; body: string; n: number }>()
     for (const c of data) {
-      const key = `${c.make} ${c.model}`
+      const key = `${c.make} ${baseModelName(c.make, c.model)}`
       const entry = grouped.get(key) ?? { years: [] as number[], prices: [] as number[], body: c.body_type ?? "", n: 0 }
       entry.n++
       if (c.year)  entry.years.push(Number(c.year))
