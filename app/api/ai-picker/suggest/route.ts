@@ -59,19 +59,68 @@ function baseModelName(make: string, model: string): string {
     const single = m.match(/^([abcegsv])[\s-]?\d{2,3}/i) // "C 220" → "C-Class"
     if (single) return single[1].toUpperCase() + "-Class"
   }
+  if (mk.includes("bmw")) {
+    // X/Z/i/M lines keep their own identity ("X5", "M5", "iX", "Z4"). Guard the
+    // M case so "M340i" (a 3-Series trim) is NOT swallowed as "M3" — only a bare
+    // single-digit M-car ("M3", "M5", "M2") qualifies.
+    const special = m.match(/^(x\d|z\d|i\d|ix|m\d(?!\d))/i)
+    if (special) return special[1].toUpperCase()
+    // Numeric series collapse to "<n> Series": the FIRST digit is the series —
+    // "520 d xDrive"→5, "320d"→3, "118i"→1 — and the literal "5 Series" form too.
+    const series = m.match(/^(\d)\s*series\b/i) || m.match(/^(\d)\d{2}(?!\d)/)
+    if (series) return series[1] + " Series"
+  }
   // Models whose following token is a TRIM, not a separate AS24 group → first word.
   const trim = m.match(/^(cayenne|macan|panamera|cayman|boxster|taycan|tiguan|touareg|passat|golf|octavia|superb|kodiaq|xc60|xc90|s60|s90|v60|v90)\b/i)
   if (trim) return trim[1][0].toUpperCase() + trim[1].slice(1).toLowerCase()
   // Alphanumeric model code that IS its own model — keep ("Q8", "SQ5", "S5", "RS Q3", "X5", "A6").
   const code = m.match(/^(rs ?q?\d|sq\d|s\d|rs\d|q\d|x\d|[a-z]{1,2}\d{1,3})/i)
   if (code) return code[1].replace(/\s+/g, " ").toUpperCase()
-  // Fallback: first 1-2 words with standalone engine numbers dropped.
-  const words = m.replace(/\b\d{2,4}\b/g, " ").trim().split(/\s+/).filter(Boolean)
-  const base = words.slice(0, 2).join(" ")
+  // Fallback: take 1-2 leading words, dropping engine displacements ("2.0",
+  // "1.6", "330") and stopping at the first engine/drivetrain spec token so a
+  // noisy "Sportage 1.6 T-GDI" collapses to "Sportage", not "Sportage 1.6".
+  const SPEC = /^(t-?gdi|tdi|tfsi|tsi|hdi|dci|cdi|gdi|crdi|bluetec|bluehdi|ecoboost|awd|fwd|rwd|4wd|4matic|xdrive|quattro|hybrid|phev|mhev)$/i
+  const toks = m.replace(/\b\d\.\d[a-z]?\b/gi, " ").replace(/\b\d{2,4}\b/g, " ").trim().split(/\s+/).filter(Boolean)
+  const out: string[] = []
+  for (const w of toks) {
+    if (SPEC.test(w)) break
+    out.push(w)
+    if (out.length === 2) break
+  }
+  const base = (out.join(" ") || toks[0] || "").trim()
   return base ? base.replace(/\b\w/g, c => c.toUpperCase()) : m
 }
 
-async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Promise<string> {
+// Canonicalize a make so a suggestion's make ("Mercedes", "VW") matches the DB's
+// stored form ("Mercedes-Benz", "Volkswagen"). Tiny on purpose — only the few
+// brands where the AI's shorthand diverges from how the parser stores them.
+// Both inventory keys and suggestion keys go through this SAME function so the
+// grounding comparison is consistent.
+function normMake(make: string): string {
+  const m = (make || "").toLowerCase().trim()
+  const alias: Record<string, string> = {
+    "mercedes": "mercedes-benz", "mercedes benz": "mercedes-benz", "merc": "mercedes-benz",
+    "vw": "volkswagen",
+    "landrover": "land rover", "range rover": "land rover",
+    "alfa": "alfa romeo",
+    "chevy": "chevrolet",
+  }
+  return alias[m] ?? m
+}
+
+// Stable grounding key: "<canonical make>|<base model>", both lowercased. Built
+// from baseModelName so a noisy DB model ("GLS 350 d") and a clean suggestion
+// model_display ("GLS") collapse to the SAME key. This is T3's validation
+// primitive — a suggestion whose key is in the real-inventory key set is one we
+// KNOW is findable right now (we just parsed it), so the pick resolves.
+function groundingKey(make: string, model: string): string {
+  return `${normMake(make)}|${baseModelName(make, model).toLowerCase().trim()}`
+}
+
+interface InventoryContext { text: string; keys: Set<string> }
+
+async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Promise<InventoryContext> {
+  const empty: InventoryContext = { text: "", keys: new Set() }
   try {
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -103,14 +152,16 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
     else if (bodyFilter.length > 1) query = query.in("body_type", bodyFilter)
 
     const { data } = await query
-    if (!data || data.length === 0) return ""
+    if (!data || data.length === 0) return empty
 
     // Group by make+model → count, year range, turnkey price range. Rank by
     // count (most-available models are the safest, most-findable candidates).
-    const grouped = new Map<string, { years: number[]; prices: number[]; body: string; n: number }>()
+    // Also remember the canonical grounding key per group so suggestions can be
+    // validated against what's genuinely in stock (T3).
+    const grouped = new Map<string, { years: number[]; prices: number[]; body: string; n: number; gkey: string }>()
     for (const c of data) {
       const key = `${c.make} ${baseModelName(c.make, c.model)}`
-      const entry = grouped.get(key) ?? { years: [] as number[], prices: [] as number[], body: c.body_type ?? "", n: 0 }
+      const entry = grouped.get(key) ?? { years: [] as number[], prices: [] as number[], body: c.body_type ?? "", n: 0, gkey: groundingKey(c.make, c.model) }
       entry.n++
       if (c.year)  entry.years.push(Number(c.year))
       if (c.price) entry.prices.push(Number(c.price))
@@ -137,9 +188,14 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
       return `• ${name} — ${n} шт, ${yearStr}, ${priceStr}${body ? ", " + body : ""}`
     })
 
-    return `РЕАЛЬНЕ МЕНЮ КАНДИДАТІВ (фактично спарсені авто, що ЗАРАЗ є на ринку ЄС за параметрами клієнта; "шт" = скільки в наявності; "медіана" = типова turnkey-ціна цієї моделі ЗАРАЗ — бери ЇЇ за основу priceRange, а не оцінку з памʼяті):\n${lines.join("\n")}`
+    // Grounding keys: EVERY real group (not just the top-25 shown) — a pick is
+    // "grounded" if it matches anything we actually have in stock.
+    const keys = new Set<string>([...grouped.values()].map(g => g.gkey))
+
+    const text = `РЕАЛЬНЕ МЕНЮ КАНДИДАТІВ (фактично спарсені авто, що ЗАРАЗ є на ринку ЄС за параметрами клієнта; "шт" = скільки в наявності; "медіана" = типова turnkey-ціна цієї моделі ЗАРАЗ — бери ЇЇ за основу priceRange, а не оцінку з памʼяті):\n${lines.join("\n")}`
+    return { text, keys }
   } catch {
-    return ""
+    return empty
   }
 }
 
@@ -538,7 +594,7 @@ model_search = назва моделі lowercase, БЕЗ префіксу мар
   // Fetch inventory context in parallel with prompt building (non-blocking)
   const inventoryContextPromise = fetchInventoryContext(prefs)
 
-  const inventoryContext = await inventoryContextPromise
+  const { text: inventoryContext, keys: inventoryKeys } = await inventoryContextPromise
   const inventoryBlock = inventoryContext
     ? `\n\n${inventoryContext}
 
@@ -658,7 +714,12 @@ ${hasBudget
                   if (rawSugg && typeof rawSugg === "object" && rawSugg.make) {
                     const mapped = mapRawSuggestion(rawSugg, prefs)
                     if (!isUsableSuggestion(mapped)) continue // skip un-parseable (bad years / not-in-EU brand)
-                    controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: mapped }))
+                    // T3: tag whether this pick is grounded in real inventory
+                    // (something we just parsed → guaranteed findable). Additive
+                    // signal only — T4 will act on it (drop/replace 0-result picks).
+                    const grounded = inventoryKeys.size > 0 &&
+                      inventoryKeys.has(groundingKey(rawSugg.make, rawSugg.model_display ?? rawSugg.model_search ?? rawSugg.model ?? ""))
+                    controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: { ...mapped, grounded } }))
                     sentCount++
                   }
                 }
@@ -674,9 +735,11 @@ ${hasBudget
                       const rawSugg = JSON.parse(match[0])
                       const mapped2 = rawSugg?.make ? mapRawSuggestion(rawSugg, prefs) : null
                       if (mapped2 && sentCount < 3 && isUsableSuggestion(mapped2)) {
+                        const grounded = inventoryKeys.size > 0 &&
+                          inventoryKeys.has(groundingKey(rawSugg.make, rawSugg.model_display ?? rawSugg.model_search ?? rawSugg.model ?? ""))
                         controller.enqueue(sseEvent(encoder, {
                           type: "suggestion",
-                          suggestion: mapped2,
+                          suggestion: { ...mapped2, grounded },
                         }))
                         sentCount++
                       }
