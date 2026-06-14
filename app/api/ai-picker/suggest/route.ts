@@ -117,18 +117,27 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
       grouped.set(key, entry)
     }
 
+    // Median is more representative than min/max (outliers — a salvage car or a
+    // loaded top-spec — don't skew it). Round to €500 for a clean anchor.
+    const median = (arr: number[]): number => {
+      const s = [...arr].sort((a, b) => a - b)
+      const mid = Math.floor(s.length / 2)
+      const v = s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
+      return Math.round(v / 500) * 500
+    }
+
     const ranked = [...grouped.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 25)
     const lines = ranked.map(([name, { years, prices, body, n }]) => {
       const yearStr = years.length ? `${Math.min(...years)}-${Math.max(...years)}` : "?"
       // Convert EU price → turnkey so the menu speaks the client's language.
       const tk = prices.map(p => Math.round(p * 1.38 + 4500))
       const priceStr = tk.length
-        ? `€${Math.min(...tk).toLocaleString()}-€${Math.max(...tk).toLocaleString()} під ключ`
+        ? `медіана €${median(tk).toLocaleString()} під ключ (€${Math.min(...tk).toLocaleString()}-€${Math.max(...tk).toLocaleString()})`
         : "?"
       return `• ${name} — ${n} шт, ${yearStr}, ${priceStr}${body ? ", " + body : ""}`
     })
 
-    return `РЕАЛЬНЕ МЕНЮ КАНДИДАТІВ (це фактично спарсені авто, що ЗАРАЗ є на ринку ЄС за параметрами клієнта; "шт" = скільки в наявності):\n${lines.join("\n")}`
+    return `РЕАЛЬНЕ МЕНЮ КАНДИДАТІВ (фактично спарсені авто, що ЗАРАЗ є на ринку ЄС за параметрами клієнта; "шт" = скільки в наявності; "медіана" = типова turnkey-ціна цієї моделі ЗАРАЗ — бери ЇЇ за основу priceRange, а не оцінку з памʼяті):\n${lines.join("\n")}`
   } catch {
     return ""
   }
