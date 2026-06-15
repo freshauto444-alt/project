@@ -882,7 +882,10 @@ ${hasBudget
           if (!f || f.n < FLOOR_MIN_SAMPLE) return false // too little real data to judge → let it through
           return f.floorTk > prefs.budget_max * FLOOR_TOLERANCE
         }
-        let droppedOver = 0 // un-named picks dropped as over-budget generation errors
+        // Over-budget un-named picks are buffered (not hard-dropped): we prefer
+        // in-budget picks, but if EVERY pick is over budget we release these so
+        // the user never gets a blank screen — flagged honestly via the banner.
+        const heldOver: any[] = []
 
         while (true) {
           const { done, value } = await reader.read()
@@ -914,8 +917,11 @@ ${hasBudget
                   if (rawSugg && typeof rawSugg === "object" && rawSugg.make) {
                     const mapped: any = mapRawSuggestion(rawSugg, prefs)
                     if (!isUsableSuggestion(mapped)) continue // skip un-parseable (bad years / not-in-EU brand)
-                    if (isOverBudgetGenError(rawSugg)) { droppedOver++; continue } // un-named, real floor over budget → generation error
                     const grounded = isGroundedSugg(rawSugg)
+                    if (isOverBudgetGenError(rawSugg)) { // un-named, real floor over budget → hold, release only if nothing else survives
+                      heldOver.push({ ...mapped, grounded: hasMenu ? grounded : undefined })
+                      continue
+                    }
                     controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: { ...mapped, grounded: hasMenu ? grounded : undefined } }))
                     sentCount++
                     if (mapped.budgetFit === "over") overCount++
@@ -932,30 +938,37 @@ ${hasBudget
                     if (match) {
                       const rawSugg = JSON.parse(match[0])
                       const mapped2: any = rawSugg?.make ? mapRawSuggestion(rawSugg, prefs) : null
-                      if (mapped2 && sentCount < 3 && isUsableSuggestion(mapped2) && !isOverBudgetGenError(rawSugg)) {
+                      if (mapped2 && sentCount < 3 && isUsableSuggestion(mapped2)) {
                         const grounded = isGroundedSugg(rawSugg)
-                        controller.enqueue(sseEvent(encoder, {
-                          type: "suggestion",
-                          suggestion: { ...mapped2, grounded: hasMenu ? grounded : undefined },
-                        }))
-                        sentCount++
-                        if (mapped2.budgetFit === "over") overCount++
+                        const payload2 = { ...mapped2, grounded: hasMenu ? grounded : undefined }
+                        if (isOverBudgetGenError(rawSugg)) {
+                          heldOver.push(payload2)
+                        } else {
+                          controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: payload2 }))
+                          sentCount++
+                          if (mapped2.budgetFit === "over") overCount++
+                        }
                       }
                     }
                   } catch { /* incomplete JSON, ignore */ }
                 }
-                // Honest scarcity ONLY when the request is genuinely infeasible at
-                // this price — client gave a budget and EVERY pick the AI could
-                // offer is over it (e.g. "Urus за €50k"). NOT when our parse-history
-                // pool is merely thin: that's an incomplete sample, and a common
-                // segment (sporty €60k) has plenty of market options.
-                if (hasBudget && sentCount > 0 && overCount === sentCount) {
-                  controller.enqueue(sseEvent(encoder, { type: "thin", reason: "over_budget", shown: sentCount }))
+                // NEVER blank: if every pick was held as over-budget, release
+                // them so the user still sees options (honestly flagged below).
+                // Prefer in-budget picks; these surface only when nothing fit.
+                let releasedOver = false
+                if (sentCount === 0 && heldOver.length > 0) {
+                  for (const h of heldOver) {
+                    if (sentCount >= 3) break
+                    controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: h }))
+                    sentCount++
+                  }
+                  releasedOver = true
                 }
-                // Backstop dropped every pick as over-budget → show the honest
-                // over-budget banner instead of a blank suggestions screen.
-                else if (hasBudget && sentCount === 0 && droppedOver > 0) {
-                  controller.enqueue(sseEvent(encoder, { type: "thin", reason: "over_budget", shown: 0 }))
+                // Honest scarcity banner — client gave a budget and either EVERY
+                // shown pick is over it (e.g. "Urus за €50k") or we had to release
+                // over-budget picks because nothing fit. NOT for a merely-thin pool.
+                if (hasBudget && sentCount > 0 && (overCount === sentCount || releasedOver)) {
+                  controller.enqueue(sseEvent(encoder, { type: "thin", reason: "over_budget", shown: sentCount }))
                 }
                 controller.enqueue(sseEvent(encoder, { type: "done" }))
               }
