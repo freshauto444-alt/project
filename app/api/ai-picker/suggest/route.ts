@@ -752,12 +752,20 @@ model_search = назва моделі lowercase, БЕЗ префіксу мар
 • Слова на кшталт "свіжа/нова/freshe" = пріоритет на роки 2022-2025 у межах бюджету.`
     : ""
 
-  // Fetch inventory context + popularity signal in parallel with prompt building
+  // Fetch inventory context + popularity signal in parallel with prompt building.
+  // TIME-BOXED: these are ENRICHMENT only — they must never stall or break
+  // suggestion generation. If the Supabase queries are slow, proceed with empty
+  // context (Claude still suggests from its own knowledge). A hung query here was
+  // blanking the picker.
+  const withTimeout = <T,>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+    Promise.race([p.catch(() => fallback), new Promise<T>(res => setTimeout(() => res(fallback), ms))])
+
   const inventoryContextPromise = fetchInventoryContext(prefs)
   const popularPromise = fetchPopularModels()
 
-  const { text: inventoryContext, keys: inventoryKeys, floors: inventoryFloors } = await inventoryContextPromise
-  const popularBlock = await popularPromise
+  const { text: inventoryContext, keys: inventoryKeys, floors: inventoryFloors } =
+    await withTimeout(inventoryContextPromise, 5000, { text: "", keys: new Set<string>(), floors: new Map() })
+  const popularBlock = await withTimeout(popularPromise, 2500, "")
   const inventoryBlock = inventoryContext
     ? `\n\n${inventoryContext}
 
