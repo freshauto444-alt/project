@@ -131,10 +131,17 @@ function groundingKey(make: string, model: string): string {
   return `${normMake(make)}|${baseModelName(make, m).toLowerCase().trim()}`
 }
 
-interface InventoryContext { text: string; keys: Set<string> }
+interface InventoryContext {
+  text: string
+  keys: Set<string>
+  // Budget-UNCONSTRAINED real price floor per canonical model key. Powers the
+  // global feasibility backstop in POST: an OFF-MENU suggestion the client never
+  // named, priced below its real floor, is a generation error and gets dropped.
+  floors: Map<string, { n: number; floorTk: number }>
+}
 
 async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Promise<InventoryContext> {
-  const empty: InventoryContext = { text: "", keys: new Set() }
+  const empty: InventoryContext = { text: "", keys: new Set(), floors: new Map() }
   try {
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -187,6 +194,58 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
       }
     }
 
+    // Shared body/segment filter — match the client's chosen kuzov (else purpose
+    // kuzovs). INCLUDE Unknown/NULL body cars: many real cars (e.g. SQ5) come
+    // back body_type "Unknown" and hard-excluding them empties the pool.
+    const bodyFilter = prefs.body_type
+      ? [prefs.body_type]
+      : (prefs.purpose_body_types ?? [])
+    const applyBody = <T extends { or: (f: string) => T }>(q: T): T => {
+      if (bodyFilter.length === 0) return q
+      const ors = bodyFilter.map(b => `body_type.ilike.%${b}%`)
+      ors.push("body_type.is.null", "body_type.eq.Unknown")
+      return q.or(ors.join(","))
+    }
+
+    // ── Price-floor map (UNCONSTRAINED by budget) — global feasibility backstop ──
+    // The AI sometimes invents an OFF-MENU suggestion the client never named and
+    // prices it below the real market (the Škoda Superb Combi case: "21-26k"
+    // turnkey when the real Estate floor is ~33k). Showing an over-budget card is
+    // only legitimate when the CLIENT named the model; an un-named over-budget
+    // pick is a generation error → POST drops it. Floor = a low percentile of
+    // turnkey price per canonical key (robust to a lone cheap/salvage outlier).
+    // Cheapest-first ordering means truncation drops only the priciest rows, so
+    // the floor of any near-budget model is captured.
+    const floors = new Map<string, { n: number; floorTk: number }>()
+    try {
+      let fq = supabase
+        .from("cars")
+        .select("make, model, price")
+        .neq("status", "Sold")
+        .gt("price", 0)
+        .order("price", { ascending: true })
+        .limit(4000)
+      if (prefs.year_from) fq = fq.gte("year", prefs.year_from)
+      if (prefs.year_to)   fq = fq.lte("year", prefs.year_to)
+      if (prefs.fuel)      fq = fq.ilike("fuel", `%${prefs.fuel}%`)
+      fq = applyBody(fq)
+      const { data: frows } = await fq
+      if (frows) {
+        const byKey = new Map<string, number[]>()
+        for (const c of frows) {
+          const k = groundingKey(c.make, c.model)
+          const arr = byKey.get(k) ?? []
+          arr.push(Number(c.price))
+          byKey.set(k, arr)
+        }
+        for (const [k, prices] of byKey) {
+          prices.sort((a, b) => a - b)
+          const idx = Math.min(prices.length - 1, Math.max(1, Math.floor(prices.length * 0.1)))
+          floors.set(k, { n: prices.length, floorTk: Math.round(prices[idx] * 1.38 + 4500) })
+        }
+      }
+    } catch { /* floors stay empty → backstop simply doesn't fire */ }
+
     // Build a REAL candidate menu from our own parse history. NOTE: parsed
     // market cars are stored with status "Available" (not "In Stock") — the old
     // `eq("status","In Stock")` matched ~0 rows, so the AI got no grounding and
@@ -206,24 +265,13 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
     if (prefs.year_from)  query = query.gte("year", prefs.year_from)
     if (prefs.year_to)    query = query.lte("year", prefs.year_to)
     if (prefs.fuel)       query = query.ilike("fuel", `%${prefs.fuel}%`)
-    // Body/segment — match the client's chosen kuzov when set (else purpose
-    // kuzovs). Crucially INCLUDE Unknown/NULL body cars: many real SUVs (e.g.
-    // SQ5) come back body_type "Unknown", and hard-excluding them emptied the
-    // body-filtered pool (the "0 SUV" symptom). Model name still lets the AI judge.
-    const bodyFilter = prefs.body_type
-      ? [prefs.body_type]
-      : (prefs.purpose_body_types ?? [])
-    if (bodyFilter.length > 0) {
-      const ors = bodyFilter.map(b => `body_type.ilike.%${b}%`)
-      ors.push("body_type.is.null", "body_type.eq.Unknown")
-      query = query.or(ors.join(","))
-    }
+    query = applyBody(query)
 
     const { data } = await query
     // Even with an empty budget-windowed menu, still surface named-model price
     // facts — that's exactly the over-budget case they exist to explain.
     if (!data || data.length === 0) {
-      return namedFactsText ? { text: namedFactsText.trimStart(), keys: new Set() } : empty
+      return namedFactsText ? { text: namedFactsText.trimStart(), keys: new Set(), floors } : { ...empty, floors }
     }
 
     // Group by make+model → count, year range, turnkey price range. Rank by
@@ -265,7 +313,7 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
     const keys = new Set<string>([...grouped.values()].map(g => g.gkey))
 
     const text = `РЕАЛЬНЕ МЕНЮ КАНДИДАТІВ (фактично спарсені авто, що ЗАРАЗ є на ринку ЄС за параметрами клієнта; "шт" = скільки в наявності; "медіана" = типова turnkey-ціна цієї моделі ЗАРАЗ — бери ЇЇ за основу priceRange, а не оцінку з памʼяті):\n${lines.join("\n")}`
-    return { text: text + namedFactsText, keys }
+    return { text: text + namedFactsText, keys, floors }
   } catch {
     return empty
   }
@@ -708,7 +756,7 @@ model_search = назва моделі lowercase, БЕЗ префіксу мар
   const inventoryContextPromise = fetchInventoryContext(prefs)
   const popularPromise = fetchPopularModels()
 
-  const { text: inventoryContext, keys: inventoryKeys } = await inventoryContextPromise
+  const { text: inventoryContext, keys: inventoryKeys, floors: inventoryFloors } = await inventoryContextPromise
   const popularBlock = await popularPromise
   const inventoryBlock = inventoryContext
     ? `\n\n${inventoryContext}
@@ -810,6 +858,32 @@ ${hasBudget
         const isGroundedSugg = (rawSugg: any): boolean =>
           hasMenu && inventoryKeys.has(groundingKey(rawSugg.make, rawSugg.model_display ?? rawSugg.model_search ?? rawSugg.model ?? ""))
 
+        // ── Global feasibility backstop ──────────────────────────────────────
+        // An OFF-MENU pick the client never named, priced below its real market
+        // floor, is a GENERATION ERROR — the Škoda Superb Combi case: AI invents
+        // it at "21-26k" turnkey for a 25k budget when the Estate floor is ~33k,
+        // the user approves, the parser (correctly) returns 0 → confusing banner.
+        // The over-budget CARD is legitimate ONLY when the client explicitly
+        // named the model (honest +€X badge). Otherwise drop it — but only with a
+        // sufficient real sample + tolerance, so we never false-drop a feasible
+        // model on a thin / expensive-skewed pool sample (the pool is incomplete;
+        // PRICE evidence we HAVE is a positive signal, unlike mere absence).
+        const namedKeys = new Set(
+          (prefs.pairs ?? []).filter(p => p?.make && p?.model)
+            .map(p => groundingKey(p!.make as string, p!.model as string)),
+        )
+        const FLOOR_MIN_SAMPLE = 6
+        const FLOOR_TOLERANCE = 1.15
+        const isOverBudgetGenError = (rawSugg: any): boolean => {
+          if (!prefs.budget_max) return false // no budget → nothing to exceed
+          const key = groundingKey(rawSugg.make, rawSugg.model_display ?? rawSugg.model_search ?? rawSugg.model ?? "")
+          if (namedKeys.has(key)) return false // client named it → honest over-budget card is OK
+          const f = inventoryFloors.get(key)
+          if (!f || f.n < FLOOR_MIN_SAMPLE) return false // too little real data to judge → let it through
+          return f.floorTk > prefs.budget_max * FLOOR_TOLERANCE
+        }
+        let droppedOver = 0 // un-named picks dropped as over-budget generation errors
+
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
@@ -840,6 +914,7 @@ ${hasBudget
                   if (rawSugg && typeof rawSugg === "object" && rawSugg.make) {
                     const mapped: any = mapRawSuggestion(rawSugg, prefs)
                     if (!isUsableSuggestion(mapped)) continue // skip un-parseable (bad years / not-in-EU brand)
+                    if (isOverBudgetGenError(rawSugg)) { droppedOver++; continue } // un-named, real floor over budget → generation error
                     const grounded = isGroundedSugg(rawSugg)
                     controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: { ...mapped, grounded: hasMenu ? grounded : undefined } }))
                     sentCount++
@@ -857,7 +932,7 @@ ${hasBudget
                     if (match) {
                       const rawSugg = JSON.parse(match[0])
                       const mapped2: any = rawSugg?.make ? mapRawSuggestion(rawSugg, prefs) : null
-                      if (mapped2 && sentCount < 3 && isUsableSuggestion(mapped2)) {
+                      if (mapped2 && sentCount < 3 && isUsableSuggestion(mapped2) && !isOverBudgetGenError(rawSugg)) {
                         const grounded = isGroundedSugg(rawSugg)
                         controller.enqueue(sseEvent(encoder, {
                           type: "suggestion",
@@ -876,6 +951,11 @@ ${hasBudget
                 // segment (sporty €60k) has plenty of market options.
                 if (hasBudget && sentCount > 0 && overCount === sentCount) {
                   controller.enqueue(sseEvent(encoder, { type: "thin", reason: "over_budget", shown: sentCount }))
+                }
+                // Backstop dropped every pick as over-budget → show the honest
+                // over-budget banner instead of a blank suggestions screen.
+                else if (hasBudget && sentCount === 0 && droppedOver > 0) {
+                  controller.enqueue(sseEvent(encoder, { type: "thin", reason: "over_budget", shown: 0 }))
                 }
                 controller.enqueue(sseEvent(encoder, { type: "done" }))
               }
