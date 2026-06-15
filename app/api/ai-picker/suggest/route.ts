@@ -141,6 +141,52 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
       process.env.SUPABASE_SERVICE_KEY!,
     )
 
+    // ── Named-model price facts (UNCONSTRAINED by budget) ────────────────────
+    // When the client EXPLICITLY named make+model (prefs.pairs), the budget-
+    // windowed menu below can exclude that model entirely if its real market
+    // price sits ABOVE the budget-derived EU ceiling. Real case: a Škoda Superb
+    // Estate floors at ~€33k turnkey, but a client asking for €25k makes the EU
+    // window €12-15k → 0 Superbs in the menu → the AI has no real anchor, guesses
+    // a too-low priceRange ("21000-26000"), the card looks feasible, the user
+    // approves → the parser search (correctly) finds 0 → confusing red banner.
+    // Feed the model's REAL price/year stats so the AI sets budgetFit/overBy/
+    // feasibilityWarning honestly upfront instead of under-pricing.
+    let namedFactsText = ""
+    const namedPairs = (prefs.pairs ?? []).filter(p => p?.make && p?.model)
+    if (namedPairs.length > 0) {
+      const factLines: string[] = []
+      for (const p of namedPairs.slice(0, 4)) {
+        let nq = supabase
+          .from("cars")
+          .select("year, price, body_type")
+          .neq("status", "Sold")
+          .ilike("make", `%${p.make}%`)
+          .ilike("model", `%${p.model}%`)
+          .limit(400)
+        // Respect the client's chosen body (incl. Unknown/NULL, which many real
+        // cars carry) so the floor reflects the variant they actually want.
+        if (prefs.body_type) {
+          nq = nq.or(`body_type.ilike.%${prefs.body_type}%,body_type.is.null,body_type.eq.Unknown`)
+        }
+        const { data: nrows } = await nq
+        if (!nrows || nrows.length === 0) continue
+        const tk = nrows.map(r => Number(r.price)).filter(v => v > 0)
+          .map(v => Math.round(v * 1.38 + 4500)).sort((a, b) => a - b)
+        if (tk.length === 0) continue
+        const years = nrows.map(r => Number(r.year)).filter(v => v > 1990)
+        const mid = Math.floor(tk.length / 2)
+        const med = tk.length % 2 ? tk[mid] : Math.round((tk[mid - 1] + tk[mid]) / 2)
+        const yearStr = years.length ? `${Math.min(...years)}-${Math.max(...years)}` : "?"
+        factLines.push(
+          `• ${p.make} ${p.model}${prefs.body_type ? ` (${prefs.body_type})` : ""} — ${tk.length} шт, ${yearStr}, ` +
+          `floor €${tk[0].toLocaleString()} під ключ, медіана €${med.toLocaleString()}, max €${tk[tk.length - 1].toLocaleString()}`,
+        )
+      }
+      if (factLines.length > 0) {
+        namedFactsText = `\n\nРЕАЛЬНА РИНКОВА ЦІНА НАЗВАНИХ КЛІЄНТОМ МОДЕЛЕЙ (фактичні спарсені авто, БЕЗ обмеження бюджетом — це ПРАВДА про ціну цієї моделі ЗАРАЗ; звіряй із нею budgetFit/overBy/priceRange. Якщо floor/медіана ВИЩІ за бюджет клієнта — постав budgetFit:"over" + overBy + feasibilityWarning і НЕ занижуй priceRange під бюджет):\n${factLines.join("\n")}`
+      }
+    }
+
     // Build a REAL candidate menu from our own parse history. NOTE: parsed
     // market cars are stored with status "Available" (not "In Stock") — the old
     // `eq("status","In Stock")` matched ~0 rows, so the AI got no grounding and
@@ -174,7 +220,11 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
     }
 
     const { data } = await query
-    if (!data || data.length === 0) return empty
+    // Even with an empty budget-windowed menu, still surface named-model price
+    // facts — that's exactly the over-budget case they exist to explain.
+    if (!data || data.length === 0) {
+      return namedFactsText ? { text: namedFactsText.trimStart(), keys: new Set() } : empty
+    }
 
     // Group by make+model → count, year range, turnkey price range. Rank by
     // count (most-available models are the safest, most-findable candidates).
@@ -215,7 +265,7 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
     const keys = new Set<string>([...grouped.values()].map(g => g.gkey))
 
     const text = `РЕАЛЬНЕ МЕНЮ КАНДИДАТІВ (фактично спарсені авто, що ЗАРАЗ є на ринку ЄС за параметрами клієнта; "шт" = скільки в наявності; "медіана" = типова turnkey-ціна цієї моделі ЗАРАЗ — бери ЇЇ за основу priceRange, а не оцінку з памʼяті):\n${lines.join("\n")}`
-    return { text, keys }
+    return { text: text + namedFactsText, keys }
   } catch {
     return empty
   }
