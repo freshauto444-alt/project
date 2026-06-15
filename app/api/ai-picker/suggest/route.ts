@@ -155,21 +155,24 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
       for (const p of namedPairs.slice(0, 4)) {
         let nq = supabase.from("cars").select("year, price, body_type").neq("status", "Sold")
           .ilike("make", `%${p.make}%`).ilike("model", `%${p.model}%`).limit(400)
-        if (prefs.body_type) {
-          nq = nq.or(`body_type.ilike.%${prefs.body_type}%,body_type.is.null,body_type.eq.Unknown`)
-        }
+        // STRICT body when specified (NOT null/Unknown): including unknown-body
+        // rows pulls non-matching variants (a Superb sedan into an Estate ask) and
+        // collapses the floor — the real "Superb Estate" floor (~€33k) got buried
+        // under a €9k mixed-body outlier. Body-specific price is the honest signal.
+        if (prefs.body_type) nq = nq.ilike("body_type", `%${prefs.body_type}%`)
         const { data: nrows } = await nq
-        if (!nrows || nrows.length === 0) continue
-        const tk = nrows.map(r => Number(r.price)).filter(v => v > 0)
+        const tk = (nrows ?? []).map(r => Number(r.price)).filter(v => v > 0)
           .map(v => Math.round(v * 1.38 + 4500)).sort((a, b) => a - b)
-        if (tk.length === 0) continue
-        const years = nrows.map(r => Number(r.year)).filter(v => v > 1990)
+        if (tk.length < 3) continue // too few to be a trustworthy price fact
+        const years = (nrows ?? []).map(r => Number(r.year)).filter(v => v > 1990)
+        // floor = 10th percentile (robust to a lone salvage/junk outlier), not min.
+        const floorTk = tk[Math.min(tk.length - 1, Math.max(0, Math.floor(tk.length * 0.1)))]
         const mid = Math.floor(tk.length / 2)
         const med = tk.length % 2 ? tk[mid] : Math.round((tk[mid - 1] + tk[mid]) / 2)
         const yearStr = years.length ? `${Math.min(...years)}-${Math.max(...years)}` : "?"
         factLines.push(
           `• ${p.make} ${p.model}${prefs.body_type ? ` (${prefs.body_type})` : ""} — ${tk.length} шт, ${yearStr}, ` +
-          `floor €${tk[0].toLocaleString()} під ключ, медіана €${med.toLocaleString()}, max €${tk[tk.length - 1].toLocaleString()}`,
+          `floor €${floorTk.toLocaleString()} під ключ, медіана €${med.toLocaleString()}, max €${tk[tk.length - 1].toLocaleString()}`,
         )
       }
       if (factLines.length > 0) {
