@@ -141,6 +141,42 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
       process.env.SUPABASE_SERVICE_KEY!,
     )
 
+    // Named-model price facts (UNCONSTRAINED by budget): when the client EXPLICITLY
+    // picked make+model, the budget-windowed menu below can exclude that model if
+    // its real price sits above the budget-derived ceiling → the AI then guesses a
+    // too-low priceRange and the card reads as feasible when it isn't (the Škoda
+    // Superb Combi case). Feed the model's REAL floor/median/max so the AI sets
+    // budgetFit/overBy/feasibilityWarning honestly. (Additive context only — no
+    // gate, no drop; that backstop caused blank screens and was dropped.)
+    let namedFactsText = ""
+    const namedPairs = (prefs.pairs ?? []).filter(p => p?.make && p?.model)
+    if (namedPairs.length > 0) {
+      const factLines: string[] = []
+      for (const p of namedPairs.slice(0, 4)) {
+        let nq = supabase.from("cars").select("year, price, body_type").neq("status", "Sold")
+          .ilike("make", `%${p.make}%`).ilike("model", `%${p.model}%`).limit(400)
+        if (prefs.body_type) {
+          nq = nq.or(`body_type.ilike.%${prefs.body_type}%,body_type.is.null,body_type.eq.Unknown`)
+        }
+        const { data: nrows } = await nq
+        if (!nrows || nrows.length === 0) continue
+        const tk = nrows.map(r => Number(r.price)).filter(v => v > 0)
+          .map(v => Math.round(v * 1.38 + 4500)).sort((a, b) => a - b)
+        if (tk.length === 0) continue
+        const years = nrows.map(r => Number(r.year)).filter(v => v > 1990)
+        const mid = Math.floor(tk.length / 2)
+        const med = tk.length % 2 ? tk[mid] : Math.round((tk[mid - 1] + tk[mid]) / 2)
+        const yearStr = years.length ? `${Math.min(...years)}-${Math.max(...years)}` : "?"
+        factLines.push(
+          `• ${p.make} ${p.model}${prefs.body_type ? ` (${prefs.body_type})` : ""} — ${tk.length} шт, ${yearStr}, ` +
+          `floor €${tk[0].toLocaleString()} під ключ, медіана €${med.toLocaleString()}, max €${tk[tk.length - 1].toLocaleString()}`,
+        )
+      }
+      if (factLines.length > 0) {
+        namedFactsText = `\n\nРЕАЛЬНА РИНКОВА ЦІНА НАЗВАНИХ КЛІЄНТОМ МОДЕЛЕЙ (фактичні спарсені авто, БЕЗ обмеження бюджетом — це ПРАВДА про ціну цієї моделі ЗАРАЗ; звіряй із нею budgetFit/overBy/priceRange. Якщо floor/медіана ВИЩІ за бюджет клієнта — постав budgetFit:"over" + overBy + feasibilityWarning і НЕ занижуй priceRange під бюджет):\n${factLines.join("\n")}`
+      }
+    }
+
     // Build a REAL candidate menu from our own parse history. NOTE: parsed
     // market cars are stored with status "Available" (not "In Stock") — the old
     // `eq("status","In Stock")` matched ~0 rows, so the AI got no grounding and
@@ -174,7 +210,9 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
     }
 
     const { data } = await query
-    if (!data || data.length === 0) return empty
+    if (!data || data.length === 0) {
+      return namedFactsText ? { text: namedFactsText.trimStart(), keys: new Set() } : empty
+    }
 
     // Group by make+model → count, year range, turnkey price range. Rank by
     // count (most-available models are the safest, most-findable candidates).
@@ -215,7 +253,7 @@ async function fetchInventoryContext(prefs: SuggestRequest["preferences"]): Prom
     const keys = new Set<string>([...grouped.values()].map(g => g.gkey))
 
     const text = `РЕАЛЬНЕ МЕНЮ КАНДИДАТІВ (фактично спарсені авто, що ЗАРАЗ є на ринку ЄС за параметрами клієнта; "шт" = скільки в наявності; "медіана" = типова turnkey-ціна цієї моделі ЗАРАЗ — бери ЇЇ за основу priceRange, а не оцінку з памʼяті):\n${lines.join("\n")}`
-    return { text, keys }
+    return { text: text + namedFactsText, keys }
   } catch {
     return empty
   }
@@ -654,12 +692,20 @@ model_search = назва моделі lowercase, БЕЗ префіксу мар
 • Слова на кшталт "свіжа/нова/freshe" = пріоритет на роки 2022-2025 у межах бюджету.`
     : ""
 
-  // Fetch inventory context + popularity signal in parallel with prompt building
+  // Fetch inventory context + popularity signal in parallel with prompt building.
+  // TIME-BOXED: enrichment only — must never stall/break suggestion generation.
+  // If the Supabase queries (menu + named-model facts) are slow, proceed with
+  // empty context (Claude still suggests from its own knowledge). A slow query
+  // here previously blanked the picker.
+  const withTimeout = <T,>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+    Promise.race([p.catch(() => fallback), new Promise<T>(res => setTimeout(() => res(fallback), ms))])
+
   const inventoryContextPromise = fetchInventoryContext(prefs)
   const popularPromise = fetchPopularModels()
 
-  const { text: inventoryContext, keys: inventoryKeys } = await inventoryContextPromise
-  const popularBlock = await popularPromise
+  const { text: inventoryContext, keys: inventoryKeys } =
+    await withTimeout(inventoryContextPromise, 5000, { text: "", keys: new Set<string>() })
+  const popularBlock = await withTimeout(popularPromise, 2500, "")
   const inventoryBlock = inventoryContext
     ? `\n\n${inventoryContext}
 
