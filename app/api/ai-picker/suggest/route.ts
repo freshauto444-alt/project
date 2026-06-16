@@ -307,7 +307,15 @@ function extractCompleteSuggestions(
 ): { complete: any[]; remaining: string } {
   const complete: any[] = []
   let t = text.trim()
-  if (t.startsWith("[")) t = t.slice(1)
+  // Tolerate a leading markdown fence / preamble: Claude sometimes prefixes
+  // ```json or a sentence (esp. for free-text requests), which left this parser
+  // stuck at 0 (it required a leading '['). Strip the fence and skip to the
+  // array opener — but only when a '[' genuinely precedes the first '{', so a
+  // '[' inside a later object's string value can't trigger a mid-stream skip.
+  t = t.replace(/^\uFEFF?\s*```(?:json)?\s*/i, "")
+  const lb = t.indexOf("[")
+  const lc = t.indexOf("{")
+  if (lb !== -1 && (lc === -1 || lb < lc)) t = t.slice(lb + 1)
 
   while (true) {
     t = t.trim()
