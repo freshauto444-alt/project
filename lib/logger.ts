@@ -1,8 +1,9 @@
 /**
  * Unified error logger — server-side + client-side.
  *
- * Server: writes JSON-lines to /Users/gruttyx/Desktop/cars_site/.logs/site-errors.jsonl
- *         (path resolved relative to process.cwd() → ../.logs/site-errors.jsonl)
+ * Server: appends JSON-lines to ../.logs/site-errors.jsonl
+ *         (resolved relative to process.cwd()). NOTE: disk is ephemeral on
+ *         Vercel — for durable analytics use the picker_events Supabase table.
  * Client: POSTs to /api/log/client-error, which logs server-side.
  *
  * Usage:

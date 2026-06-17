@@ -65,6 +65,36 @@ export const BRAND_ALIASES: Record<string, string> = {
   "дс": "DS Automobiles", "ds": "DS Automobiles",
 }
 
+// ── Canonical known brands — THE single source of truth ──────────────────────
+// Both the Claude-path validator (`_KNOWN` in route.ts) and the regex fallback
+// (`KNOWN_BRANDS` in regexFallbackExtract) derive from this list. Adding a brand
+// here propagates everywhere — no more manual sync drift between the two paths
+// and the parser. Canonical spelling only (matches normalizeBrand output).
+export const KNOWN_BRANDS: readonly string[] = [
+  "BMW", "Audi", "Mercedes-Benz", "Volkswagen", "Volvo", "Toyota",
+  "Honda", "Mazda", "Skoda", "SEAT", "Cupra", "Ford", "Opel",
+  "Peugeot", "Renault", "Citroen", "Hyundai", "Kia", "Nissan",
+  "Mitsubishi", "Subaru", "Lexus", "Porsche", "Tesla", "MINI",
+  "Jeep", "Land Rover", "Jaguar", "Alfa Romeo", "Saab", "Suzuki",
+  "Dacia", "Fiat", "Genesis", "Chrysler", "Dodge",
+  // Premium / exotic
+  "Aston Martin", "Bentley", "Ferrari", "Lamborghini", "Maserati",
+  "Rolls-Royce", "Infiniti", "Acura", "Smart", "Abarth", "Alpine",
+  "DS Automobiles",
+] as const
+
+// Canonical-name lookup for hallucination guards (Claude path).
+export const KNOWN_BRAND_SET: ReadonlySet<string> = new Set(KNOWN_BRANDS)
+
+// Lowercase spellings for substring detection in free text (regex fallback).
+// Longest-first so "mercedes-benz" wins over "mercedes" and "land rover" over a
+// stray "rover". Includes a couple of short colloquial spellings the canonical
+// list lacks ("vw", "mercedes"); these map back via normalizeBrand downstream.
+export const KNOWN_BRANDS_LOWER: readonly string[] = [
+  ...KNOWN_BRANDS.map(b => b.toLowerCase()),
+  "vw", "mercedes",
+].sort((a, b) => b.length - a.length)
+
 // ── Multi-brand concern terms ────────────────────────────────────────────────
 // Unlike BRAND_ALIASES (one canonical brand per key), a concern term expands
 // into SEVERAL brands so "ВАГ" searches the WHOLE group, not just Volkswagen.

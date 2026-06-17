@@ -31,34 +31,9 @@ export const DRIVE_MAP: Record<string, string> = {
   "Передній (FWD)": "FWD", "Задній (RWD)": "RWD", "Повний (AWD/4WD)": "AWD",
 }
 
-export const BRAND_ALIASES: Record<string, string> = {
-  "ваг": "Volkswagen", "вольксваген": "Volkswagen", "фольксваген": "Volkswagen", "vw": "Volkswagen",
-  "бмв": "BMW", "бэмвэ": "BMW",
-  "мерс": "Mercedes-Benz", "мерседес": "Mercedes-Benz",
-  "ауді": "Audi", "ауди": "Audi",
-  "тойота": "Toyota", "шкода": "Skoda", "škoda": "Skoda",
-  "вольво": "Volvo", "кіа": "Kia", "кия": "Kia",
-  "хюндай": "Hyundai", "хундай": "Hyundai", "хендай": "Hyundai",
-  "форд": "Ford", "пежо": "Peugeot", "рено": "Renault",
-  "опель": "Opel", "порше": "Porsche", "тесла": "Tesla",
-  "лексус": "Lexus", "субару": "Subaru", "мазда": "Mazda",
-  "нісан": "Nissan", "ніссан": "Nissan", "альфа": "Alfa Romeo",
-  "ситроен": "Citroen", "сітроен": "Citroen",
-}
-
-export const COLOR_ALIASES: Record<string, string> = {
-  "чорний": "Black", "чорна": "Black", "черний": "Black", "black": "Black",
-  "білий": "White", "біла": "White", "белый": "White", "white": "White",
-  "сірий": "Grey", "сіра": "Grey", "серый": "Grey", "grey": "Grey", "gray": "Grey",
-  "синій": "Blue", "синя": "Blue", "синий": "Blue", "blue": "Blue",
-  "червоний": "Red", "червона": "Red", "красный": "Red", "red": "Red",
-  "зелений": "Green", "зелена": "Green", "зеленый": "Green", "green": "Green",
-  "коричневий": "Brown", "коричнева": "Brown", "brown": "Brown",
-  "бежевий": "Beige", "бежева": "Beige", "beige": "Beige",
-  "сріблястий": "Silver", "срібний": "Silver", "silver": "Silver",
-  "помаранчевий": "Orange", "оранжевий": "Orange", "orange": "Orange",
-  "жовтий": "Yellow", "жовта": "Yellow", "yellow": "Yellow",
-}
+// NOTE: brand/colour aliases + the known-brands set are the SINGLE source of
+// truth in `lib/picker/normalize.ts` (BRAND_ALIASES, COLOR_ALIASES, KNOWN_BRANDS,
+// KNOWN_BRAND_SET). Do not re-add copies here — import from normalize instead.
 
 // ── Cost calculation (import to Ukraine) ─────────────────────────────────────
 
@@ -280,11 +255,3 @@ export function lookupPriceGuide(make: string, model: string): { min: number; ma
   return null
 }
 
-export const KNOWN_BRANDS = new Set([
-  "BMW", "Audi", "Mercedes-Benz", "Volkswagen", "Volvo", "Toyota",
-  "Honda", "Mazda", "Skoda", "SEAT", "Cupra", "Ford", "Opel",
-  "Peugeot", "Renault", "Citroen", "Hyundai", "Kia", "Nissan",
-  "Mitsubishi", "Subaru", "Lexus", "Porsche", "Tesla", "MINI",
-  "Jeep", "Land Rover", "Jaguar", "Alfa Romeo", "Saab", "Suzuki",
-  "Dacia", "Fiat", "Chrysler", "Dodge", "Chevrolet", "Genesis",
-])
