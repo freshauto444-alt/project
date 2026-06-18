@@ -102,3 +102,44 @@ describe("extractFromChat — rule 8: alternatives clear pairs", () => {
     expect(out.pairs).toEqual([{ make: "BMW", model: null }])
   })
 })
+
+// ── "Find more" widens the SAME model (opposite of rule 8) ───────────────────
+describe("extractFromChat — find-more preserves the current model", () => {
+  it("'знайди більше варіантів' keeps the X5 M pair (no brand mixing)", async () => {
+    const prev: ChatPreferences = {
+      ...EMPTY,
+      pairs: [{ make: "BMW", model: "X5 M" }],
+      body_type: "SUV",
+      budget_max: 80000,
+      year_from: 2020,
+    }
+    // Claude drops the echo on a bare "find more" turn.
+    claudeReturns({ pairs: [] })
+    const out = await extractFromChat(userMsg("знайди більше варіантів"), prev)
+    expect(out.pairs).toEqual([{ make: "BMW", model: "X5 M" }]) // not cleared, not mixed
+    expect(out.body_type).toBe("SUV") // class/budget/year carried through
+    expect(out.budget_max).toBe(80000)
+    expect(out.year_from).toBe(2020)
+  })
+
+  it("a genuine 'які ще альтернативи' still CLEARS pairs (rule 8 intact)", async () => {
+    const prev: ChatPreferences = { ...EMPTY, pairs: [{ make: "BMW", model: "X5 M" }], body_type: "SUV" }
+    claudeReturns({ pairs: [] })
+    const out = await extractFromChat(userMsg("які ще альтернативи"), prev)
+    expect(out.pairs).toHaveLength(0)
+    expect(out.body_type).toBe("SUV")
+  })
+
+  it("'find more' recovers the picked model from journey when prev.pairs is empty (card→chat handoff)", async () => {
+    // The approve-card search keeps its prefs in a different component, so a
+    // follow-up chat turn can arrive with previous.pairs empty — journey carries it.
+    const prev: ChatPreferences = { ...EMPTY, body_type: "SUV", budget_max: 80000 }
+    claudeReturns({ pairs: [] })
+    const out = await extractFromChat(
+      userMsg("знайди більше варіантів"),
+      prev,
+      { approvedSuggestion: { make: "BMW", model: "X5 M" } },
+    )
+    expect(out.pairs).toEqual([{ make: "BMW", model: "X5 M" }])
+  })
+})

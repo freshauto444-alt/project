@@ -222,10 +222,37 @@ ${prevContext}${journeyContext}
       /альтернатив|які ще|інші марки|що ще|схож|порадите окрім|крім цього|alternativ|other options/i.test(lastUserText)
     const aiClearedPairs = Array.isArray(parsed.pairs) && parsed.pairs.length === 0
 
+    // Effective fallback pairs: when no previous pairs survive on the chat side
+    // (the approve-card search keeps its prefs in a different component, so a
+    // follow-up chat turn can arrive with previous.pairs empty), fall back to the
+    // model the client picked on the picker stage. journey.approvedSuggestion is
+    // forwarded with every chat request, so it's the durable carrier of the
+    // current model across the suggestion-card → chat handoff.
+    const fallbackPairs: CarPair[] =
+      prev.pairs.length > 0
+        ? prev.pairs
+        : journey?.approvedSuggestion?.make
+          ? [{
+              make: normalizeBrand(journey.approvedSuggestion.make),
+              model: journey.approvedSuggestion.model || null,
+            }]
+          : prev.pairs
+
+    // "Find more" guard — the OPPOSITE of rule 8. When the latest message asks
+    // for MORE of the same ("знайди більше варіантів", "ще авто") and is NOT an
+    // alternatives/other-brands request, the intent is to WIDEN the current
+    // model search, not switch to all brands. Force-preserve the current pairs
+    // even if Claude dropped them, so "find more" never mixes in other makes.
+    const wantsMore =
+      /більше|ще авто|ще варіант|більше варіант|більше авто|more|знайди ще|шукай ще|мало результат/i.test(lastUserText)
+    const wantsMoreSameModel = wantsMore && !wantsAlternatives
+
     return {
       pairs: finalPairs.length > 0
         ? finalPairs
-        : (wantsAlternatives && aiClearedPairs ? [] : prev.pairs),
+        : wantsMoreSameModel
+          ? fallbackPairs
+          : (wantsAlternatives && aiClearedPairs ? [] : fallbackPairs),
       fuel: mergeField("fuel", prev.fuel),
       body_type: mergeField("body_type", prev.body_type),
       budget: typeof parsed.budget === "number" ? parsed.budget : prev.budget,
