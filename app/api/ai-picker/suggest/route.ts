@@ -355,6 +355,35 @@ function extractCompleteSuggestions(
   return { complete, remaining: t }
 }
 
+// ── Real-price grounding: turnkey floor/median for a make+model+year window ──
+// Year-aware (unlike namedFactsText, which pools all generations): keyed on the
+// CARD's own yearRange, so an older-gen split card (X5 M F85 2015-2018) gets the
+// F85 floor, not an F85+F95 blend. Used by the post-Claude clamp to overwrite a
+// hallucinated priceRange with reality. Returns null when too few rows to trust.
+async function modelPriceFacts(
+  supabase: any,
+  make: string,
+  model: string,
+  yearFrom: number | null,
+  yearTo: number | null,
+  bodyType?: string | null,
+): Promise<{ n: number; floorTk: number; medTk: number; maxTk: number } | null> {
+  let q = supabase.from("cars").select("year, price").neq("status", "Sold")
+    .ilike("make", `%${make}%`).ilike("model", `%${model}%`).limit(400)
+  if (yearFrom) q = q.gte("year", yearFrom)
+  if (yearTo)   q = q.lte("year", yearTo)
+  if (bodyType) q = q.ilike("body_type", `%${bodyType}%`)
+  const { data } = await q
+  const tk = (data ?? [])
+    .map((r: any) => Number(r.price)).filter((v: number) => v > 0)
+    .map((v: number) => Math.round(v * 1.38 + 4500)).sort((a: number, b: number) => a - b)
+  if (tk.length < 3) return null
+  const floorTk = tk[Math.min(tk.length - 1, Math.max(0, Math.floor(tk.length * 0.1)))]
+  const mid = Math.floor(tk.length / 2)
+  const medTk = tk.length % 2 ? tk[mid] : Math.round((tk[mid - 1] + tk[mid]) / 2)
+  return { n: tk.length, floorTk, medTk, maxTk: tk[tk.length - 1] }
+}
+
 // ── Map raw Claude suggestion → normalized CarSuggestion ─────────────────────
 
 // Year a brand actually started selling in the EUROPEAN market. We import from
@@ -391,14 +420,14 @@ function mapRawSuggestion(
   }
 
   const parseYearRange = (s: string) => {
-    const parts = String(s ?? "").split("-")
+    const parts = String(s ?? "").split(/[-–—]/) // hyphen + en/em dash (Claude uses all three)
     return {
       from: (() => { const v = parseInt(parts[0]?.replace(/\D/g, "")); return !isNaN(v) && v > 1990 ? v : null })(),
       to:   (() => { const v = parseInt(parts[1]?.replace(/\D/g, "") ?? ""); return !isNaN(v) && v > 1990 ? v : null })(),
     }
   }
   const parsePriceRange = (s: string) => {
-    const parts = String(s ?? "").split("-")
+    const parts = String(s ?? "").split(/[-–—]/) // hyphen + en/em dash
     return {
       min: (() => { const v = parseInt(parts[0]?.replace(/\D/g, "")); return !isNaN(v) && v > 0 ? v : null })(),
       max: (() => { const v = parseInt(parts[1]?.replace(/\D/g, "") ?? ""); return !isNaN(v) && v > 0 ? v : null })(),
@@ -546,7 +575,7 @@ export async function POST(req: Request): Promise<Response> {
 
    priceRange = реальний turnkey-діапазон для типового стану (медіана ринку): нижня межа = типовий floor авто з нормальним пробігом, верхня межа = типовий well-equipped варіант. Формула: turnkey = EU × 1.38 + €4500.
 
-   ВАЖЛИВО для дорогих/перформанс-моделей (X5 M, AMG, RS, Cayenne Turbo, M5 тощо), коли клієнт НЕ вказав бюджет: priceRange має охоплювати РЕАЛЬНИЙ ВЖИВАНИЙ ринок ЄС — включно зі СТАРІШИМИ поколіннями, які реально купують. НЕ квоти лише ціну найновішого покоління. Нижня межа = типове доступне вживане авто цієї моделі (старше покоління/більший пробіг), а не ціна майже нового. Напр. BMW X5 M: вживані від ~€90k під ключ (F85 2015-2018), а не 180k+ (лише нова F95).
+   ВАЖЛИВО для дорогих/перформанс-моделей (X5 M, AMG, RS, Cayenne Turbo, M5 тощо): priceRange має охоплювати РЕАЛЬНИЙ ВЖИВАНИЙ ринок ЄС — включно зі СТАРІШИМИ поколіннями, які реально купують (нижня межа = типове доступне вживане авто старшого покоління, а не ціна майже нового). АЛЕ НЕ ВГАДУЙ цифру з пам'яті — перформанс-моделі найчастіше переоцінюють. Якщо у блоці РЕАЛЬНА РИНКОВА ЦІНА або МЕНЮ КАНДИДАТІВ є факти по цій моделі/поколінню — priceRange МУСИТЬ дорівнювати тим floor/median (це джерело правди), а не твоїй оцінці. Старіше покоління (напр. BMW X5 M F85 2015-2018) коштує ІСТОТНО менше за нове — не став йому ціну нового.
 
    НЕ занижуй ціни щоб вписатись у бюджет клієнта. Краще чесно показати реальний діапазон і дати клієнту вирішити.
 
@@ -765,6 +794,58 @@ ${hasBudget
       const abort = new AbortController()
       const timeout = setTimeout(() => abort.abort(), 35_000)
 
+      // ── Post-Claude price clamp (grounds each card in real parsed data) ──
+      // Claude's priceRange is a memory guess and is often wildly off for
+      // older/performance generations (e.g. X5 M F85 quoted ~€90k vs real
+      // ~€46-68k turnkey). Per card, look up the REAL turnkey floor/median for
+      // its make+model+yearRange; if Claude's number is materially off, overwrite
+      // priceRange AND searchParams.budget_min/max (which drives the next search,
+      // so this also fixes the "too few cars" starvation) + recompute budgetFit.
+      const clampSupabase = (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
+        ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
+        : null
+      const factsCache = new Map<string, { floorTk: number; medTk: number; maxTk: number; n: number } | null>()
+      const clampToReal = async (mapped: any): Promise<any> => {
+        if (!clampSupabase) return mapped
+        const sp = mapped?.searchParams ?? {}
+        const make: string = sp.make ?? mapped?.make ?? ""
+        const model: string = sp.model ?? mapped?.model ?? ""
+        if (!make || !model) return mapped
+        const yf = typeof sp.year_from === "number" ? sp.year_from : null
+        const yt = typeof sp.year_to === "number" ? sp.year_to : null
+        const key = `${make}|${model}|${yf}|${yt}`.toLowerCase()
+        let facts = factsCache.get(key)
+        if (facts === undefined) {
+          try { facts = await modelPriceFacts(clampSupabase, make, model, yf, yt, prefs.body_type ?? null) }
+          catch { facts = null }
+          factsCache.set(key, facts)
+        }
+        if (!facts) return mapped // no trustworthy data → leave Claude's guess
+        const claimedMin: number | null = typeof sp.budget_min === "number" ? sp.budget_min : null
+        // "Off" = Claude's floor sits outside a sane band around the real data.
+        // Inflated (> median×1.25) is the reported bug; lowballed (< floor×0.65)
+        // is the opposite failure (Škoda case). Either way, replace with reality.
+        const inflated = claimedMin != null && claimedMin > facts.medTk * 1.25
+        const lowballed = claimedMin != null && claimedMin < facts.floorTk * 0.65
+        if (!inflated && !lowballed) return mapped
+        const newMin = facts.floorTk
+        const newMax = Math.max(facts.maxTk, Math.round(facts.medTk * 1.35))
+        let budgetFit: "fits" | "tight" | "over" = mapped.budgetFit
+        let overBy: number = mapped.overBy ?? 0
+        const userMax: number | null = prefs.budget_max ?? null
+        if (userMax != null) {
+          if (newMin > userMax) { budgetFit = "over"; overBy = newMin - userMax }
+          else if (newMin > userMax * 0.9) { budgetFit = "tight"; overBy = 0 }
+          else { budgetFit = "fits"; overBy = 0 }
+        }
+        return {
+          ...mapped,
+          priceRange: `${newMin.toLocaleString()}-${newMax.toLocaleString()} EUR`,
+          budgetFit, overBy,
+          searchParams: { ...sp, budget_min: newMin, budget_max: newMax },
+        }
+      }
+
       try {
         const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
@@ -850,8 +931,9 @@ ${hasBudget
                 for (const rawSugg of complete) {
                   if (sentCount >= 3) break
                   if (rawSugg && typeof rawSugg === "object" && rawSugg.make) {
-                    const mapped: any = mapRawSuggestion(rawSugg, prefs)
+                    let mapped: any = mapRawSuggestion(rawSugg, prefs)
                     if (!isUsableSuggestion(mapped)) continue // skip un-parseable (bad years / not-in-EU brand)
+                    mapped = await clampToReal(mapped) // ground price in real parsed data
                     const grounded = isGroundedSugg(rawSugg)
                     controller.enqueue(sseEvent(encoder, { type: "suggestion", suggestion: { ...mapped, grounded: hasMenu ? grounded : undefined } }))
                     sentCount++
@@ -868,8 +950,9 @@ ${hasBudget
                     const match = cleaned.match(/\{[\s\S]*\}/)
                     if (match) {
                       const rawSugg = JSON.parse(match[0])
-                      const mapped2: any = rawSugg?.make ? mapRawSuggestion(rawSugg, prefs) : null
+                      let mapped2: any = rawSugg?.make ? mapRawSuggestion(rawSugg, prefs) : null
                       if (mapped2 && sentCount < 3 && isUsableSuggestion(mapped2)) {
+                        mapped2 = await clampToReal(mapped2) // ground price in real parsed data
                         const grounded = isGroundedSugg(rawSugg)
                         controller.enqueue(sseEvent(encoder, {
                           type: "suggestion",
