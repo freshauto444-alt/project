@@ -100,13 +100,20 @@ export function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[]
             : new RegExp(`(?:^|[^a-z0-9])${reqNorm}`, "i")
           if (tokenRe.test(carNorm)) return true
 
-          // Multi-token trims ("Golf GTI", "Model 3"): the contiguous-normalized
-          // form ("golfgti") misses labels that interleave words ("Golf 5-door
-          // GTI" → "golf5doorgti"). Accept when EVERY significant token appears in
-          // the car model. Make is already constrained, and requiring all tokens
-          // keeps "Golf GTI" from matching base "Golf" or "Golf GTD".
+          // Multi-token trims ("Golf GTI", "Model 3"). Two traps to handle:
+          //  1. interleaved labels ("Golf 5-door GTI" → "golf5doorgti");
+          //  2. the trim lives ONLY in the title, not the model — Blocket labels
+          //     the same car model="Golf-Serie" with "GTI" in title_line. Checking
+          //     just c.model dropped every Blocket trim car (Golf GTI/RS6/AMG),
+          //     mirroring the parser-side bug. So: the BASE token must be in the
+          //     model (keeps "Polo GTI" out of "Golf GTI"), but the remaining
+          //     (trim) tokens may be satisfied by model + title_line.
           const reqTokens = reqModel.split(/[\s-]+/).filter(t => t.length >= 2)
-          if (reqTokens.length >= 2 && reqTokens.every(t => carModel.includes(t))) return true
+          if (reqTokens.length >= 2) {
+            const baseTok = reqTokens[0]                    // "golf", "polo", "model"
+            const hay = `${carModel} ${(c.title_line ?? "").toLowerCase()}`
+            if (carModel.includes(baseTok) && reqTokens.every(t => hay.includes(t))) return true
+          }
 
           return false
         })

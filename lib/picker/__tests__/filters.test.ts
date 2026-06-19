@@ -28,6 +28,19 @@ describe("filterCarsClientSide — multi-token trim model matching", () => {
     expect(out).toHaveLength(5)
   })
 
+  it("keeps Blocket GTI cars where the trim is only in title_line (model='Golf-Serie')", () => {
+    const cars = [
+      { make: "Volkswagen", model: "Golf-Serie", title_line: "GTI Performance 2.0 TSI DSG 230hk" },
+      { make: "Volkswagen", model: "Golf VIII", title_line: "Golf GTI Clubsport" },
+      { make: "Volkswagen", model: "Golf-Serie", title_line: "1.5 TSI Comfort" }, // base → drop
+    ]
+    const out = filterCarsClientSide(cars, gtiPrefs)
+    expect(out.map(c => c.title_line)).toEqual([
+      "GTI Performance 2.0 TSI DSG 230hk",
+      "Golf GTI Clubsport",
+    ])
+  })
+
   it("still rejects base Golf and Golf GTD for a GTI search", () => {
     const cars = [
       car("Volkswagen", "Golf"),
