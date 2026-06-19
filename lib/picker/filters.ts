@@ -116,14 +116,20 @@ export function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[]
           if (reqTokens.length >= 2) {
             const baseTok = reqTokens[0]                    // "golf", "polo", "i30"
             const hay = `${carModel} ${(c.title_line ?? "").toLowerCase()}`
+            const hp = Number(c.horsepower ?? c.hp) || 0
+            const isLine = (t: string) => new RegExp(`\\b${t}[\\s-]?line\\b`).test(hay)
             // A single-letter trim must match as a WHOLE word (so "n" doesn't hit
             // "performance"/"sedan") and must NOT count the "N-Line"/"R-Line"
-            // cosmetic package, which is not the hot-hatch. Multi-char trims
-            // ("gti", "amg") use a plain substring like before.
+            // cosmetic package. AS24 labels a real i30 N as model="I30",
+            // title="Hyundai I30" — NO "N" anywhere in the text — so we also accept
+            // a clear performance signal (≥240hp; base i30 / N-Line are ≤160hp),
+            // mirroring the parser's spec/hp gate. Multi-char trims ("gti","amg")
+            // use a plain substring like before.
             const present = (t: string): boolean => {
               if (t.length === 1) {
+                if (isLine(t)) return hp >= 240   // "<t>-Line" + real power = the hot-hatch; else the package
                 const cleaned = hay.replace(new RegExp(`\\b${t}[\\s-]?line\\b`, "g"), " ")
-                return new RegExp(`\\b${t}\\b`).test(cleaned)
+                return new RegExp(`\\b${t}\\b`).test(cleaned) || hp >= 240
               }
               return hay.includes(t)
             }

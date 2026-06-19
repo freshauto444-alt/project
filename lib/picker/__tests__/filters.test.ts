@@ -56,19 +56,20 @@ describe("filterCarsClientSide — multi-token trim model matching", () => {
     expect(out).toHaveLength(1)
   })
 
-  it("keeps single-letter trims (i30 N) where 'N' is only in title_line, drops base + N-Line", () => {
+  it("keeps real i30 N (275hp), drops N-Line (150hp) and base — by text AND power", () => {
+    // Mirrors real AS24 data: model is always "I30"; the real N says "N
+    // Performance" / 275PS, N-Line is a 150PS cosmetic package, and AS24 also
+    // lists the real N with NO "N" in the title at all (just hp=275).
     const nPrefs: ChatPreferences = { ...EMPTY, pairs: [{ make: "Hyundai", model: "i30 N" }] }
     const cars = [
-      { make: "Hyundai", model: "I30", title_line: "Hyundai i30 N Performance 2.0 T-GDI", year: 2021 },
-      { make: "Hyundai", model: "I30", title_line: "N Performance DCT 280hk", year: 2022 },
-      { make: "Hyundai", model: "I30", title_line: "1.0 T-GDI N-Line", year: 2021 },  // package → drop
-      { make: "Hyundai", model: "I30", title_line: "1.4 T-GDi Comfort", year: 2020 }, // base → drop
+      { make: "Hyundai", model: "I30", title_line: "N Performance 1.Hand 275PS Top", horsepower: 275, year: 2019 },
+      { make: "Hyundai", model: "I30", title_line: "N Performance", horsepower: 275, year: 2020 },
+      { make: "Hyundai", model: "I30", title_line: "Hyundai I30", horsepower: 280, year: 2021 }, // no "N" text, real N by hp
+      { make: "Hyundai", model: "I30", title_line: "FL 1,6 T-GDI N-LINE Klima", horsepower: 150, year: 2021 }, // N-Line package → drop
+      { make: "Hyundai", model: "I30", title_line: "1.4 T-GDi Comfort", horsepower: 140, year: 2020 }, // base → drop
     ]
     const out = filterCarsClientSide(cars, nPrefs)
-    expect(out.map(c => c.title_line)).toEqual([
-      "Hyundai i30 N Performance 2.0 T-GDI",
-      "N Performance DCT 280hk",
-    ])
+    expect(out.map(c => c.horsepower)).toEqual([275, 275, 280])
   })
 
   it("keeps Golf R (single-letter R in title), drops base Golf and R-Line", () => {
