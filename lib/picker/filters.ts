@@ -108,11 +108,26 @@ export function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[]
           //     mirroring the parser-side bug. So: the BASE token must be in the
           //     model (keeps "Polo GTI" out of "Golf GTI"), but the remaining
           //     (trim) tokens may be satisfied by model + title_line.
-          const reqTokens = reqModel.split(/[\s-]+/).filter(t => t.length >= 2)
+          // Keep single-letter trim tokens too ("i30 N", "Golf R") — the old
+          // `>= 2` floor dropped "n"/"r", leaving ["i30"], so the `>= 2` guard
+          // below was never entered and EVERY i30 N / Golf R car was zeroed even
+          // though the parser returned them (trim only in title_line, model="I30").
+          const reqTokens = reqModel.split(/[\s-]+/).filter(t => t.length >= 1)
           if (reqTokens.length >= 2) {
-            const baseTok = reqTokens[0]                    // "golf", "polo", "model"
+            const baseTok = reqTokens[0]                    // "golf", "polo", "i30"
             const hay = `${carModel} ${(c.title_line ?? "").toLowerCase()}`
-            if (carModel.includes(baseTok) && reqTokens.every(t => hay.includes(t))) return true
+            // A single-letter trim must match as a WHOLE word (so "n" doesn't hit
+            // "performance"/"sedan") and must NOT count the "N-Line"/"R-Line"
+            // cosmetic package, which is not the hot-hatch. Multi-char trims
+            // ("gti", "amg") use a plain substring like before.
+            const present = (t: string): boolean => {
+              if (t.length === 1) {
+                const cleaned = hay.replace(new RegExp(`\\b${t}[\\s-]?line\\b`, "g"), " ")
+                return new RegExp(`\\b${t}\\b`).test(cleaned)
+              }
+              return hay.includes(t)
+            }
+            if (carModel.includes(baseTok) && reqTokens.every(present)) return true
           }
 
           return false

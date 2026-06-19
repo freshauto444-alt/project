@@ -56,6 +56,32 @@ describe("filterCarsClientSide — multi-token trim model matching", () => {
     expect(out).toHaveLength(1)
   })
 
+  it("keeps single-letter trims (i30 N) where 'N' is only in title_line, drops base + N-Line", () => {
+    const nPrefs: ChatPreferences = { ...EMPTY, pairs: [{ make: "Hyundai", model: "i30 N" }] }
+    const cars = [
+      { make: "Hyundai", model: "I30", title_line: "Hyundai i30 N Performance 2.0 T-GDI", year: 2021 },
+      { make: "Hyundai", model: "I30", title_line: "N Performance DCT 280hk", year: 2022 },
+      { make: "Hyundai", model: "I30", title_line: "1.0 T-GDI N-Line", year: 2021 },  // package → drop
+      { make: "Hyundai", model: "I30", title_line: "1.4 T-GDi Comfort", year: 2020 }, // base → drop
+    ]
+    const out = filterCarsClientSide(cars, nPrefs)
+    expect(out.map(c => c.title_line)).toEqual([
+      "Hyundai i30 N Performance 2.0 T-GDI",
+      "N Performance DCT 280hk",
+    ])
+  })
+
+  it("keeps Golf R (single-letter R in title), drops base Golf and R-Line", () => {
+    const rPrefs: ChatPreferences = { ...EMPTY, pairs: [{ make: "Volkswagen", model: "Golf R" }] }
+    const cars = [
+      { make: "Volkswagen", model: "Golf-Serie", title_line: "Golf R 4Motion DSG 320hk", year: 2021 },
+      { make: "Volkswagen", model: "Golf", title_line: "1.5 TSI R-Line", year: 2021 },  // package → drop
+      { make: "Volkswagen", model: "Golf", title_line: "1.0 TSI Comfort", year: 2020 }, // base → drop
+    ]
+    const out = filterCarsClientSide(cars, rPrefs)
+    expect(out.map(c => c.title_line)).toEqual(["Golf R 4Motion DSG 320hk"])
+  })
+
   it("does NOT cap a large in-band result set — returns all matches, not a truncated page", () => {
     // Guards the 'more results, not fewer' goal: now that the parser returns
     // ~100+ cars per source, the client-side filter must never silently slice.

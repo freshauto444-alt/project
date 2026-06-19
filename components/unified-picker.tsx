@@ -430,17 +430,17 @@ export default function UnifiedPicker({ onSelectCar }: { onSelectCar: (car: CarT
     let searchBudgetMin = 20000
     let searchBudgetMax: number | undefined = undefined
     if (hasUserBudget) {
+      // User stated a budget → honour it strictly (never show over-budget cars).
       searchBudgetMin = userBudget.min || 20000
       searchBudgetMax = userBudget.max || undefined
-    } else {
-      const aiMin = suggestion.searchParams.budget_min
-      const aiMax = suggestion.searchParams.budget_max
-      if (typeof aiMin === "number" && typeof aiMax === "number") {
-        const tol = aiMax < 50000 ? 0 : aiMax < 100000 ? 5000 : aiMax < 200000 ? 10000 : 20000
-        searchBudgetMin = Math.max(20000, aiMin - tol)
-        searchBudgetMax = aiMax + tol
-      }
     }
+    // No user budget → DO NOT cap the search by the AI card's narrow per-model
+    // priceRange. That range is a turnkey *estimate* that Claude routinely emits
+    // at ~EU magnitude; the search reverse-converts it ÷1.38, which pushed the EU
+    // ceiling BELOW the model's real market floor and starved niche/performance
+    // cards (i30 N, M240i, A45, RS6) to 0 → the misleading "raise your budget"
+    // dead-end. With no stated budget we show the model's FULL real range
+    // (MIN_BUDGET floor only, max left open); the card still DISPLAYS the estimate.
 
     try {
       const res = await fetch("/api/ai-picker", {
