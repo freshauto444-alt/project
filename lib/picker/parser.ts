@@ -31,7 +31,11 @@ async function callParserInstant(
     if (payload.transmission) params.set("transmission", String(payload.transmission))
     if (payload.body_type) params.set("body_type", String(payload.body_type))
     if (payload.drive) params.set("drive", String(payload.drive))
-    params.set("limit", "100")
+    // Raised 100 → 200: the parser now returns ~100+ cars per source, so a 100
+    // cap here would silently discard the extra stock the parser worked to fetch.
+    // The site renders the full merged set (no display-side slice), so the only
+    // thing gating result count is this per-pair request limit.
+    params.set("limit", "200")
 
     const url = `${PARSER_URL}/search/instant?${params}`
     // Diagnostic — log every parser call so you can correlate "0 cars found"

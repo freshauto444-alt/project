@@ -55,4 +55,29 @@ describe("filterCarsClientSide — multi-token trim model matching", () => {
     const out = filterCarsClientSide([{ make: "", model: "" }], gtiPrefs)
     expect(out).toHaveLength(1)
   })
+
+  it("does NOT cap a large in-band result set — returns all matches, not a truncated page", () => {
+    // Guards the 'more results, not fewer' goal: now that the parser returns
+    // ~100+ cars per source, the client-side filter must never silently slice.
+    const cars = Array.from({ length: 150 }, (_, i) => car("Volkswagen", `Golf GTI ${i}`))
+    const out = filterCarsClientSide(cars, gtiPrefs)
+    expect(out).toHaveLength(150)
+  })
+})
+
+describe("filterCarsClientSide — year strict-unknown rule does not over-drop", () => {
+  it("keeps unknown-year cars for a pre-2018 search (bulk of old SE stock)", () => {
+    const prefs: ChatPreferences = { ...EMPTY, year_from: 2010 }
+    const cars = [{ year: 2012 }, { year: undefined }, { year: 2009 }]
+    const out = filterCarsClientSide(cars, prefs)
+    // 2012 in-band + unknown kept (not strict); 2009 below floor dropped.
+    expect(out).toHaveLength(2)
+  })
+
+  it("drops unknown-year cars ONLY for a strict 2018+ search", () => {
+    const prefs: ChatPreferences = { ...EMPTY, year_from: 2018 }
+    const cars = [{ year: 2020 }, { year: undefined }, { year: 2015 }]
+    const out = filterCarsClientSide(cars, prefs)
+    expect(out).toEqual([{ year: 2020 }])
+  })
 })
