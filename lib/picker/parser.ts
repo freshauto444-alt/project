@@ -78,9 +78,13 @@ export async function triggerParser(
   let budgetMin = chat.budget_min ?? base.budget_min
   let budgetMax = chat.budget_max ?? base.budget_max
   if (chat.budget != null && budgetMin == null && budgetMax == null) {
-    const margin = Math.round(chat.budget * 0.05)
-    budgetMin = Math.max(0, chat.budget - margin)
-    budgetMax = chat.budget + margin
+    // A single budget figure is a CEILING ("бюджет 35к" / "до 35к" = up to X),
+    // NOT a tight band. The old ±5% window collapsed to ~€2.5k EU after the
+    // turnkey→EU divide (÷1.38), so "Golf GTI, budget 35k" matched only cars at
+    // exactly €20.8–23.4k EU → ~4 results. Treat it as the max and let the
+    // MIN_BUDGET floor below set the lower bound, so the client sees the whole
+    // affordable range up to their budget.
+    budgetMax = chat.budget
   }
   // Always enforce the turnkey floor, even when the client gave NO budget (e.g.
   // "Шукати за всіма параметрами"): Fresh Auto deals only in cars ≥ MIN_BUDGET

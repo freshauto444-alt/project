@@ -100,6 +100,14 @@ export function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[]
             : new RegExp(`(?:^|[^a-z0-9])${reqNorm}`, "i")
           if (tokenRe.test(carNorm)) return true
 
+          // Multi-token trims ("Golf GTI", "Model 3"): the contiguous-normalized
+          // form ("golfgti") misses labels that interleave words ("Golf 5-door
+          // GTI" → "golf5doorgti"). Accept when EVERY significant token appears in
+          // the car model. Make is already constrained, and requiring all tokens
+          // keeps "Golf GTI" from matching base "Golf" or "Golf GTD".
+          const reqTokens = reqModel.split(/[\s-]+/).filter(t => t.length >= 2)
+          if (reqTokens.length >= 2 && reqTokens.every(t => carModel.includes(t))) return true
+
           return false
         })
       })
