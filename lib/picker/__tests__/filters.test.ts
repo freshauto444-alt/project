@@ -83,6 +83,40 @@ describe("filterCarsClientSide — multi-token trim model matching", () => {
     expect(out.map(c => c.title_line)).toEqual(["Golf R 4Motion DSG 320hk"])
   })
 
+  it("keeps AS24 BMW M240i labelled as bare '240', drops base 218/220 (motor-code bridge)", () => {
+    // Real AS24 data: M240i comes back model='240' title='BMW 240' (trim stripped),
+    // base trims as '218'/'220'. Bytbil keeps the full 'M240I xDrive' label.
+    const prefs: ChatPreferences = { ...EMPTY, pairs: [{ make: "BMW", model: "M240i" }] }
+    const cars = [
+      { make: "BMW", model: "240", title_line: "BMW 240", horsepower: 374, year: 2023 }, // AS24 real M240i
+      { make: "BMW", model: "240", title_line: "BMW 240", horsepower: 387, year: 2022 }, // AS24 real M240i
+      { make: "BMW", model: "M240I xDrive M-Sport", title_line: "BMW M240I xDrive", horsepower: 340, year: 2023 }, // bytbil
+      { make: "BMW", model: "218", title_line: "BMW 218", horsepower: 136, year: 2022 }, // base → drop
+      { make: "BMW", model: "220", title_line: "BMW 220", horsepower: 178, year: 2022 }, // base → drop
+    ]
+    const out = filterCarsClientSide(cars, prefs)
+    expect(out.map(c => c.model)).toEqual(["240", "240", "M240I xDrive M-Sport"])
+  })
+
+  it("keeps AS24 BMW M340i labelled as bare '340', not a 320i", () => {
+    const prefs: ChatPreferences = { ...EMPTY, pairs: [{ make: "BMW", model: "M340i" }] }
+    const cars = [
+      { make: "BMW", model: "340", title_line: "BMW 340", horsepower: 374, year: 2021 }, // AS24 real M340i
+      { make: "BMW", model: "320", title_line: "BMW 320", horsepower: 184, year: 2021 }, // 320i → drop
+      { make: "BMW", model: "330", title_line: "BMW 330", horsepower: 258, year: 2021 }, // 330i → drop
+    ]
+    const out = filterCarsClientSide(cars, prefs)
+    expect(out.map(c => c.model)).toEqual(["340"])
+  })
+
+  it("motor-code bridge is BMW-scoped — does not leak across makes", () => {
+    // An Audi search must NOT match a stray 3-digit code via the BMW bridge.
+    const prefs: ChatPreferences = { ...EMPTY, pairs: [{ make: "Audi", model: "A4" }] }
+    const cars = [{ make: "Audi", model: "240", title_line: "weird 240", year: 2021 }]
+    const out = filterCarsClientSide(cars, prefs)
+    expect(out).toHaveLength(0)
+  })
+
   it("does NOT cap a large in-band result set — returns all matches, not a truncated page", () => {
     // Guards the 'more results, not fewer' goal: now that the parser returns
     // ~100+ cars per source, the client-side filter must never silently slice.

@@ -136,6 +136,21 @@ export function filterCarsClientSide(cars: any[], prefs: ChatPreferences): any[]
             if (carModel.includes(baseTok) && reqTokens.every(present)) return true
           }
 
+          // AS24 strips BMW trim designations down to the bare 3-digit motor code:
+          // an M240i comes back as model="240", an M340i as "340", a 320i as "320"
+          // — while the request still carries the full designation ("m240i"). The
+          // generic gate above can't bridge "m240i" → "240", so EVERY AS24 BMW
+          // M-performance car was dropped (detector: parser returned 67, filter kept
+          // 0). Bridge on the motor code; make is already confirmed to match. Base
+          // trims keep their own code ("218"/"220"), so they don't leak into an
+          // M240i search. Bytbil/Blocket keep the full "M240I" label and are already
+          // matched by the token test above, so this only rescues the AS24 case.
+          if (reqMake.includes("bmw")) {
+            const reqMotor = reqModel.match(/\b[a-z]?(\d{3})[a-z]*\b/)  // "m240i"→240, "320i"→320, "240"→240
+            const carMotor = carModel.match(/\b(\d{3})\b/)             // "240", "bmw 240"
+            if (reqMotor && carMotor && reqMotor[1] === carMotor[1]) return true
+          }
+
           return false
         })
       })
